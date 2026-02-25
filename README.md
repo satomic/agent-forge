@@ -30,13 +30,7 @@ npm install -g @agent-forge-copilot/cli
 forge init
 ```
 
-### What Happens
-
-<p align="center">
-  <img src="assets/logo-banner.svg" alt="AGENT-FORGE" width="600"/>
-</p>
-
-`forge init` launches an interactive wizard with **3 modes**:
+### What Happens when you run `forge init`:
 
 - **New project** — prompts for a description of what to automate, then generates custom Copilot artifacts using AI.
 - **Existing project** — scans your workspace (detects tech stack, project type, existing `.github/` files), then generates tailored customizations.
