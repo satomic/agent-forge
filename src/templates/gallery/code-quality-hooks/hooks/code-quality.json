@@ -1,0 +1,18 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "type": "command",
+        "command": "./.github/hooks/scripts/format-on-edit.sh",
+        "timeout": 15
+      }
+    ],
+    "PreToolUse": [
+      {
+        "type": "command",
+        "command": "./.github/hooks/scripts/block-dangerous-cmds.sh",
+        "timeout": 10
+      }
+    ]
+  }
+}

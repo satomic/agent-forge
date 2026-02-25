@@ -1,0 +1,259 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" shape-rendering="crispEdges">
+  <defs>
+    <!-- Pixel grid pattern -->
+    <pattern id="pixelGrid" width="4" height="4" patternUnits="userSpaceOnUse">
+      <rect width="4" height="4" fill="none"/>
+      <rect width="3.5" height="3.5" fill="none" stroke="rgba(255,255,255,0.03)" stroke-width="0.5"/>
+    </pattern>
+
+    <!-- Forge glow gradient -->
+    <radialGradient id="forgeGlow" cx="50%" cy="45%" r="35%">
+      <stop offset="0%" stop-color="#FF6B35" stop-opacity="0.9">
+        <animate attributeName="stop-opacity" values="0.9;1;0.5;0.9" dur="3s" repeatCount="indefinite"/>
+      </stop>
+      <stop offset="50%" stop-color="#FF3D00" stop-opacity="0.5">
+        <animate attributeName="stop-opacity" values="0.5;0.8;0.3;0.5" dur="3s" repeatCount="indefinite"/>
+      </stop>
+      <stop offset="100%" stop-color="#FF3D00" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Anvil body gradient -->
+    <linearGradient id="anvilBody" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#C9D1D9"/>
+      <stop offset="40%" stop-color="#8B949E"/>
+      <stop offset="100%" stop-color="#6E7681"/>
+    </linearGradient>
+
+    <!-- Anvil face (top) gradient -->
+    <linearGradient id="anvilFace" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#D0D7DE"/>
+      <stop offset="50%" stop-color="#C9D1D9"/>
+      <stop offset="100%" stop-color="#AFB8C1"/>
+    </linearGradient>
+
+    <!-- Hammer gradient -->
+    <linearGradient id="hammerHead" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#8B949E"/>
+      <stop offset="100%" stop-color="#6E7681"/>
+    </linearGradient>
+
+    <!-- Hammer handle gradient -->
+    <linearGradient id="hammerHandle" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#7C4A1E"/>
+      <stop offset="50%" stop-color="#9A6534"/>
+      <stop offset="100%" stop-color="#7C4A1E"/>
+    </linearGradient>
+
+    <!-- Copilot sparkle gradient -->
+    <linearGradient id="copilotGrad1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1F6FEB"/>
+      <stop offset="100%" stop-color="#6E40C9"/>
+    </linearGradient>
+    <linearGradient id="copilotGrad2" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#58A6FF"/>
+      <stop offset="100%" stop-color="#BC8CFF"/>
+    </linearGradient>
+  </defs>
+
+  <style>
+    /* ===== ASSEMBLY INTRO ===== */
+    @keyframes assembleAnvil {
+      0% { transform: translate(0, 40px); opacity: 0; }
+      60% { transform: translate(0, 40px); opacity: 0; }
+      80% { transform: translate(0, -4px); opacity: 1; }
+      90% { transform: translate(0, 2px); opacity: 1; }
+      100% { transform: translate(0, 0); opacity: 1; }
+    }
+    @keyframes assembleHammer {
+      0% { transform: translate(0, -40px) rotate(-20deg); opacity: 0; }
+      50% { transform: translate(0, -40px) rotate(-20deg); opacity: 0; }
+      70% { transform: translate(0, -5px) rotate(2deg); opacity: 1; }
+      85% { transform: translate(0, 2px) rotate(-1deg); opacity: 1; }
+      100% { transform: translate(0, 0) rotate(0deg); opacity: 1; }
+    }
+    @keyframes assembleSparks {
+      0% { opacity: 0; }
+      80% { opacity: 0; }
+      100% { opacity: 1; }
+    }
+
+    .anvil-group {
+      animation: assembleAnvil 1.5s ease-out forwards;
+    }
+    .hammer-assembly {
+      animation: assembleHammer 1.5s ease-out forwards;
+    }
+    .sparks-assembly {
+      animation: assembleSparks 1.5s ease-out forwards;
+    }
+
+    /* ===== HAMMER STRIKE ===== */
+    @keyframes hammerStrike {
+      0% { transform: rotate(0deg); }
+      15% { transform: rotate(-18deg); }
+      35% { transform: rotate(6deg); }
+      42% { transform: rotate(4deg); }
+      50% { transform: rotate(0deg); }
+      100% { transform: rotate(0deg); }
+    }
+    .hammer-group {
+      transform-origin: 80px 48px;
+      animation: hammerStrike 2.4s ease-in-out 1.5s infinite;
+    }
+
+    /* ===== SPARK BURST ===== */
+    @keyframes spark1 {
+      0%, 30% { transform: translate(0, 0); opacity: 0; }
+      35% { opacity: 1; }
+      55% { transform: translate(-16px, -20px); opacity: 0; }
+      100% { opacity: 0; }
+    }
+    @keyframes spark2 {
+      0%, 30% { transform: translate(0, 0); opacity: 0; }
+      35% { opacity: 1; }
+      55% { transform: translate(12px, -24px); opacity: 0; }
+      100% { opacity: 0; }
+    }
+    @keyframes spark3 {
+      0%, 32% { transform: translate(0, 0); opacity: 0; }
+      37% { opacity: 1; }
+      57% { transform: translate(-20px, -12px); opacity: 0; }
+      100% { opacity: 0; }
+    }
+    @keyframes spark4 {
+      0%, 32% { transform: translate(0, 0); opacity: 0; }
+      37% { opacity: 1; }
+      57% { transform: translate(18px, -16px); opacity: 0; }
+      100% { opacity: 0; }
+    }
+    @keyframes spark5 {
+      0%, 33% { transform: translate(0, 0); opacity: 0; }
+      38% { opacity: 1; }
+      58% { transform: translate(-8px, -28px); opacity: 0; }
+      100% { opacity: 0; }
+    }
+    @keyframes spark6 {
+      0%, 34% { transform: translate(0, 0); opacity: 0; }
+      39% { opacity: 1; }
+      59% { transform: translate(6px, -18px); opacity: 0; }
+      100% { opacity: 0; }
+    }
+
+    .spark-1 { animation: spark1 2.4s ease-out 1.5s infinite; }
+    .spark-2 { animation: spark2 2.4s ease-out 1.5s infinite; }
+    .spark-3 { animation: spark3 2.4s ease-out 1.5s infinite; }
+    .spark-4 { animation: spark4 2.4s ease-out 1.5s infinite; }
+    .spark-5 { animation: spark5 2.4s ease-out 1.5s infinite; }
+    .spark-6 { animation: spark6 2.4s ease-out 1.5s infinite; }
+
+    /* ===== GLOW PULSE ===== */
+    @keyframes glowPulse {
+      0% { opacity: 0.4; }
+      50% { opacity: 0.85; }
+      100% { opacity: 0.4; }
+    }
+    .forge-glow {
+      animation: glowPulse 3s ease-in-out 1.5s infinite;
+    }
+
+    /* ===== COPILOT SPARKLES ===== */
+    @keyframes twinkle {
+      0% { transform: scale(0); opacity: 0; }
+      50% { transform: scale(1); opacity: 1; }
+      100% { transform: scale(0); opacity: 0; }
+    }
+    .sparkle-1 {
+      transform-origin: 100px 20px;
+      animation: twinkle 2s ease-in-out 2s infinite;
+    }
+    .sparkle-2 {
+      transform-origin: 16px 28px;
+      animation: twinkle 2s ease-in-out 2.7s infinite;
+    }
+    .sparkle-3 {
+      transform-origin: 108px 52px;
+      animation: twinkle 2s ease-in-out 3.4s infinite;
+    }
+  </style>
+
+  <!-- ===== FORGE GLOW (behind everything) ===== -->
+  <g class="forge-glow sparks-assembly">
+    <ellipse cx="64" cy="64" rx="40" ry="32" fill="url(#forgeGlow)" opacity="0.6"/>
+  </g>
+
+  <!-- ===== ANVIL ===== -->
+  <g class="anvil-group">
+    <!-- Anvil base (wide bottom) -->
+    <rect x="36" y="96" width="56" height="8" rx="1" fill="url(#anvilBody)"/>
+    <!-- Anvil column -->
+    <rect x="44" y="76" width="40" height="20" rx="1" fill="url(#anvilBody)"/>
+    <!-- Anvil waist (narrower middle) -->
+    <rect x="48" y="72" width="32" height="8" rx="1" fill="#8B949E"/>
+    <!-- Anvil face (top working surface) - wide -->
+    <rect x="32" y="64" width="64" height="8" rx="1" fill="url(#anvilFace)"/>
+    <!-- Anvil horn (left point) -->
+    <polygon points="32,64 32,72 20,68" fill="#AFB8C1"/>
+    <!-- Anvil heel (right slightly extended) -->
+    <rect x="92" y="64" width="8" height="8" rx="1" fill="#AFB8C1"/>
+    <!-- Anvil face highlight -->
+    <rect x="34" y="64" width="60" height="2" fill="rgba(255,255,255,0.15)"/>
+    <!-- Hot spot on anvil face -->
+    <rect x="52" y="64" width="16" height="4" rx="1" fill="#FF6B35" opacity="0.5">
+      <animate attributeName="opacity" values="0.3;0.7;0.3" dur="2.4s" begin="1.5s" repeatCount="indefinite"/>
+    </rect>
+  </g>
+
+  <!-- ===== HAMMER ===== -->
+  <g class="hammer-assembly">
+    <g class="hammer-group">
+      <!-- Hammer handle -->
+      <rect x="56" y="28" width="4" height="36" rx="1" fill="url(#hammerHandle)" transform="rotate(-8, 58, 46)"/>
+      <!-- Hammer head -->
+      <rect x="44" y="20" width="28" height="12" rx="2" fill="url(#hammerHead)"/>
+      <!-- Hammer head highlight -->
+      <rect x="44" y="20" width="28" height="3" rx="1" fill="rgba(255,255,255,0.2)"/>
+      <!-- Hammer face (striking surface) -->
+      <rect x="44" y="28" width="28" height="4" rx="1" fill="#6E7681"/>
+      <!-- Hammer peen (left side detail) -->
+      <rect x="40" y="22" width="4" height="8" rx="1" fill="#6E7681"/>
+    </g>
+  </g>
+
+  <!-- ===== SPARKS ===== -->
+  <g class="sparks-assembly">
+    <rect class="spark-1" x="58" y="62" width="3" height="3" fill="#FFD700" rx="0.5"/>
+    <rect class="spark-2" x="62" y="62" width="2" height="2" fill="#FF6B35" rx="0.5"/>
+    <rect class="spark-3" x="56" y="63" width="2" height="2" fill="#FFA500" rx="0.5"/>
+    <rect class="spark-4" x="66" y="62" width="3" height="3" fill="#FFD700" rx="0.5"/>
+    <rect class="spark-5" x="60" y="61" width="2" height="2" fill="#FFFFFF" rx="0.5"/>
+    <rect class="spark-6" x="64" y="63" width="2" height="2" fill="#FF6B35" rx="0.5"/>
+  </g>
+
+  <!-- ===== COPILOT SPARKLES ===== -->
+  <!-- Sparkle 1 (top-right, large) -->
+  <g class="sparkle-1">
+    <line x1="100" y1="14" x2="100" y2="26" stroke="url(#copilotGrad1)" stroke-width="2" stroke-linecap="round"/>
+    <line x1="94" y1="20" x2="106" y2="20" stroke="url(#copilotGrad1)" stroke-width="2" stroke-linecap="round"/>
+    <line x1="95.5" y1="15.5" x2="104.5" y2="24.5" stroke="url(#copilotGrad2)" stroke-width="1.2" stroke-linecap="round"/>
+    <line x1="104.5" y1="15.5" x2="95.5" y2="24.5" stroke="url(#copilotGrad2)" stroke-width="1.2" stroke-linecap="round"/>
+  </g>
+
+  <!-- Sparkle 2 (top-left, small) -->
+  <g class="sparkle-2">
+    <line x1="16" y1="24" x2="16" y2="32" stroke="url(#copilotGrad2)" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="12" y1="28" x2="20" y2="28" stroke="url(#copilotGrad2)" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="13.5" y1="25.5" x2="18.5" y2="30.5" stroke="url(#copilotGrad1)" stroke-width="1" stroke-linecap="round"/>
+    <line x1="18.5" y1="25.5" x2="13.5" y2="30.5" stroke="url(#copilotGrad1)" stroke-width="1" stroke-linecap="round"/>
+  </g>
+
+  <!-- Sparkle 3 (right, medium) -->
+  <g class="sparkle-3">
+    <line x1="108" y1="47" x2="108" y2="57" stroke="url(#copilotGrad1)" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="103" y1="52" x2="113" y2="52" stroke="url(#copilotGrad1)" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="104.8" y1="48.8" x2="111.2" y2="55.2" stroke="url(#copilotGrad2)" stroke-width="1" stroke-linecap="round"/>
+    <line x1="111.2" y1="48.8" x2="104.8" y2="55.2" stroke="url(#copilotGrad2)" stroke-width="1" stroke-linecap="round"/>
+  </g>
+
+  <!-- Pixel grid overlay -->
+  <rect width="128" height="128" fill="url(#pixelGrid)" opacity="0.4"/>
+</svg>
