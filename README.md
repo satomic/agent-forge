@@ -69,14 +69,6 @@ After init, AGENT-FORGE also prompts you to select a **generation mode** — cho
 
 > **AI vs. Static generation:** If the [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-in-the-command-line) (`copilot`) is installed, `init` and `generate` use it with multi-agent orchestration to produce AI-generated artifacts tailored to your description. Without it, AGENT-FORGE falls back to pre-built static templates.
 
-### Open Copilot & Go
-
-```
-@Copilot Architect I need a code review workflow for my Python Django project
-```
-
-The Copilot Architect will analyze your workspace, interview you about your needs, and design the right artifact mix — then hand off creation to specialized worker agents.
-
 ## CLI Reference
 
 | Command | Description |
@@ -140,46 +132,6 @@ When using AI generation, you can choose a model interactively or pass `--model`
 
 ## What Gets Installed
 
-### Core (always installed)
-
-```
-.github/
-├── copilot-instructions.md               # Always-on project rules
-├── agents/
-│   ├── copilot-architect.agent.md        # Orchestrator (user-facing)
-│   ├── artifact-builder.agent.md         # Worker: generates artifacts
-│   ├── workflow-designer.agent.md        # Worker: multi-agent workflows
-│   └── customization-reviewer.agent.md   # Worker: validates everything
-├── prompts/
-│   ├── design-workflow.prompt.md         # /design-workflow
-│   ├── scaffold-all.prompt.md            # /scaffold-all
-│   ├── generate-usecase.prompt.md        # /generate-usecase
-│   ├── generate-hooks.prompt.md          # /generate-hooks
-│   ├── generate-mcp.prompt.md            # /generate-mcp
-│   ├── generate-workflow.prompt.md       # /generate-workflow
-│   ├── install-usecase.prompt.md         # /install-usecase
-│   ├── list-customizations.prompt.md     # /list-customizations
-│   └── validate-customizations.prompt.md # /validate-customizations
-├── instructions/                         # Auto-applied quality gates
-│   ├── agent-authoring.instructions.md
-│   ├── prompt-authoring.instructions.md
-│   ├── instruction-authoring.instructions.md
-│   ├── skill-authoring.instructions.md
-│   ├── hook-authoring.instructions.md
-│   ├── mcp-authoring.instructions.md
-│   └── workflow-authoring.instructions.md
-└── skills/                               # On-demand knowledge packs
-    ├── vscode-customization/SKILL.md     # Schema reference
-    ├── subagent-patterns/SKILL.md        # Orchestration patterns
-    ├── agent-template/SKILL.md           # Agent field reference
-    ├── instruction-template/SKILL.md     # Instruction field reference
-    ├── prompt-template/SKILL.md          # Prompt field reference
-    ├── skill-template/SKILL.md           # Skill field reference
-    ├── hook-template/SKILL.md            # Hook lifecycle reference
-    ├── mcp-template/SKILL.md             # MCP server config reference
-    └── workflow-template/SKILL.md        # Agentic workflow reference
-```
-
 ### Gallery Use Cases (pick during init)
 
 | Use Case | Type | Description |
@@ -198,69 +150,9 @@ When using AI generation, you can choose a model interactively or pass `--model`
 
 Agent bundles install 4 files each: an agent, a prompt (slash command), an instruction (quality rules), and a skill (domain knowledge).
 
-## Copilot Integration
+### AI-Generated Artifacts
 
-Once installed, you get these slash commands in Copilot Chat:
-
-| Command | Description |
-|---------|-------------|
-| `/design-workflow` | Guided design session — describe your goal and get a tailored artifact plan |
-| `/generate-usecase` | Create a custom use case with full agent + prompt + instruction + skill |
-| `/generate-hooks` | Generate lifecycle hooks (format, lint, security) |
-| `/generate-mcp` | Generate MCP server configurations |
-| `/generate-workflow` | Generate agentic workflows (GitHub Actions + AI) |
-| `/scaffold-all` | Generate all artifact types for any topic |
-| `/install-usecase` | Copy a generated use case from `use-cases/` into `.github/` |
-| `/list-customizations` | Scan workspace and inventory all customization files |
-| `/validate-customizations` | Check artifacts for schema errors and best-practice violations |
-
-Plus any slash commands from your installed gallery use cases (`/code-review`, `/testing`, `/documentation`, etc.).
-
-## How It Works
-
-### Architecture
-
-AGENT-FORGE uses a **coordinator-worker** architecture with a strict **3-phase pipeline**:
-
-```
-Phase 1: PLAN                    Phase 2: BUILD (parallel)         Phase 3: VALIDATE
-┌──────────────────┐     ┌─────────────────┐ ┌─────────────────┐  ┌─────────────────┐
-│ Copilot Architect│     │Artifact Builder  │ │Workflow Designer│  │  Customization  │
-│   (coordinator)  │────▶│  (standalone     │ │  (multi-agent   │─▶│   Reviewer      │
-│                  │     │   files)         │ │   systems)      │  │                 │
-│ • Interview user │     │ • agents         │ │ • coordinator   │  │ • Schema check  │
-│ • Scan workspace │     │ • prompts        │ │ • workers       │  │ • Cross-refs    │
-│ • Recommend plan │     │ • instructions   │ │ • handoffs      │  │ • Best practices│
-│ • Get approval   │     │ • skills         │ │ • patterns      │  │                 │
-└──────────────────┘     └─────────────────┘ └─────────────────┘  └─────────────────┘
-                                                                          │
-                                                                   ✅ PASS → Done
-                                                                   ❌ FAIL → Retry
-```
-
-When using the Copilot CLI, AGENT-FORGE launches a **multi-agent orchestration system** with specialized writer agents:
-
-| Agent | Role |
-|-------|------|
-| `forge-orchestrator` | Coordinates the entire generation pipeline |
-| `forge-generator` | Single-pass artifact generation |
-| `forge-agent-writer` | Writes `.agent.md` files |
-| `forge-prompt-writer` | Writes `.prompt.md` files |
-| `forge-instruction-writer` | Writes `.instructions.md` files |
-| `forge-skill-writer` | Writes `SKILL.md` files |
-| `forge-hook-writer` | Writes hook configurations and scripts |
-| `forge-mcp-writer` | Writes MCP server configurations |
-| `forge-workflow-writer` | Writes agentic workflow definitions |
-
-### Key Principles
-
-| Principle | Description |
-|-----------|-------------|
-| **Context isolation** | Subagents run in isolated windows — no shared state |
-| **Coordinator never creates files** | Only plans and delegates |
-| **Mandatory validation** | Every build must pass the quality gate |
-| **Retry loop** | Errors trigger re-build, not manual fixes |
-| **Parallel by default** | Both Phase 2 subagents run simultaneously |
+When using `forge init` or `forge generate` with a description, AGENT-FORGE generates custom artifacts directly into `.github/`. The output depends on the generation mode you select — it can include any combination of agents, prompts, instructions, skills, hooks, MCP server configs, and agentic workflows.
 
 ### Artifact Types
 
@@ -274,6 +166,55 @@ When using the Copilot CLI, AGENT-FORGE launches a **multi-agent orchestration s
 | MCP Server | `.vscode/mcp.json` | External tool servers for AI-powered development |
 | Agentic Workflow | `.github/workflows/*.md` | GitHub Actions with AI automation (IssueOps, ChatOps, etc.) |
 
+## How It Works
+
+### Architecture
+
+AGENT-FORGE has two generation paths:
+
+**1. AI-powered generation** (requires [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-in-the-command-line))
+
+The CLI prepares a temporary workspace with a multi-agent orchestration system, then launches the Copilot CLI to generate artifacts tailored to your description. The orchestrator coordinates specialized writer agents that each handle a specific artifact type:
+
+| Agent | Role |
+|-------|------|
+| `forge-orchestrator` | Coordinates the entire generation pipeline |
+| `forge-generator` | Single-pass artifact generation (legacy fallback) |
+| `forge-agent-writer` | Writes `.agent.md` files |
+| `forge-prompt-writer` | Writes `.prompt.md` files |
+| `forge-instruction-writer` | Writes `.instructions.md` files |
+| `forge-skill-writer` | Writes `SKILL.md` files |
+| `forge-hook-writer` | Writes hook configurations and scripts |
+| `forge-mcp-writer` | Writes MCP server configurations |
+| `forge-workflow-writer` | Writes agentic workflow definitions |
+
+Generated artifacts are copied back from the temp workspace into your project's `.github/` directory.
+
+**2. Static generation** (fallback when Copilot CLI is not available, or with `--static`)
+
+Generates pre-built template files programmatically from inline TypeScript templates. Produces the same artifact types but with generic content instead of AI-tailored output.
+
+### Generation Flow
+
+```
+                                    ┌──────────────────┐
+                               Yes  │  AI Generation   │
+                             ┌─────▶│                  │
+┌─────────────────┐     ┌────┴─────────────┐  │ • Temp workspace │
+│  forge init /   │     │ Copilot CLI      │  │ • 9 writer agents│
+│  forge generate │────▶│ found?           │  │ • Copy results   │
+│                 │     └────┬─────────────┘  └──────────────────┘
+│ • Description   │          │
+│ • Mode select   │     No   │
+│ • Model select  │          ▼
+└─────────────────┘     ┌──────────────────┐
+                        │ Static Generation│
+                        │                  │
+                        │ • Inline templates│
+                        │ • Direct file gen │
+                        └──────────────────┘
+```
+
 ## Generating Custom Use Cases
 
 ### From the CLI
@@ -285,24 +226,6 @@ forge generate "API rate limiter with per-tenant limits"
 With the Copilot CLI installed, this launches the multi-agent orchestration system to generate AI-tailored artifacts directly into `.github/`.
 
 Without the Copilot CLI (or with `--static`), it generates pre-built template files instead.
-
-### From Copilot Chat
-
-```
-/generate-usecase security vulnerability scanner for Python
-```
-
-The Copilot Architect designs and creates a tailored set of artifacts using the Plan → Build → Validate pipeline.
-
-### Installing a Generated Use Case
-
-```bash
-# Copy into .github/ manually
-cp -r use-cases/api-rate-limiter/* .github/
-
-# Or use the Copilot command
-/install-usecase api-rate-limiter
-```
 
 ## Prerequisites
 
@@ -350,9 +273,8 @@ src/
 │   ├── detector.ts       # Workspace tech stack detection
 │   └── validator.ts      # YAML schema validation
 ├── templates/
-│   ├── cli/              # Multi-agent orchestration templates (9 agents)
-│   ├── core/             # Always-installed Copilot files
-│   └── gallery/          # Pre-built use case templates
+│   ├── cli/              # Multi-agent orchestration templates (9 writer agents)
+│   └── gallery/          # Pre-built use case templates (11 use cases)
 └── types.ts              # Shared TypeScript types
 ```
 

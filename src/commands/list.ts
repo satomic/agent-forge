@@ -11,14 +11,7 @@ export async function listCommand(): Promise<void> {
   // Installed customizations in .github/
   console.log(chalk.bold("\nInstalled (in .github/):")); 
   if (workspace.hasGitHub) {
-    // Filter out core architect agents — those are internal
-    const userAgents = workspace.existingAgents.filter(
-      (a) =>
-        !a.includes("copilot-architect") &&
-        !a.includes("artifact-builder") &&
-        !a.includes("workflow-designer") &&
-        !a.includes("customization-reviewer"),
-    );
+    const userAgents = workspace.existingAgents;
 
     if (userAgents.length > 0) {
       for (const agent of userAgents) {

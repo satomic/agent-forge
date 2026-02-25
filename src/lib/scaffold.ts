@@ -3,7 +3,7 @@ import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
 import { mergeIntoExisting } from "./merger.js";
-import type { ProjectType, Domain, GenerationMode } from "../types.js";
+import type { Domain, GenerationMode } from "../types.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -25,32 +25,6 @@ function getTemplatesDir(): string {
   throw new Error(
     `Templates directory not found. Searched:\n${candidates.map((c) => `  - ${c}`).join("\n")}\n__dirname: ${__dirname}`,
   );
-}
-
-/**
- * Install the core AGENT-FORGE files into .github/ of the target directory.
- * Core = agents, prompts, instructions, skills, copilot-instructions.md
- */
-export async function installCore(
-  targetDir: string,
-  options: {
-    projectType?: ProjectType;
-    force?: boolean;
-  } = {},
-): Promise<{ copied: string[]; skipped: string[]; merged: string[] }> {
-  const templatesDir = getTemplatesDir();
-  const coreDir = path.join(templatesDir, "core");
-  const githubDir = path.join(targetDir, ".github");
-
-  // If .github/ exists, do a smart merge
-  if (await fs.pathExists(githubDir)) {
-    return mergeIntoExisting(coreDir, githubDir, { force: options.force });
-  }
-
-  // Fresh install — copy everything
-  await fs.copy(coreDir, githubDir);
-  const copied = await listAllFiles(coreDir, "");
-  return { copied, skipped: [], merged: [] };
 }
 
 /**
