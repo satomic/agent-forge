@@ -22,7 +22,6 @@ AGENT-FORGE is a Context Engineering Toolkit that sets up GitHub Copilot for you
 
 - **Multi-agent AI generation** — a planner decomposes your project into domains, then 7 specialized writer agents generate tailored artifacts in parallel
 - **Greenfield & brownfield** — works with new projects (from a description) or existing codebases (scans your code first)
-- **11 ready-to-use templates** — code review, testing, documentation, deployment, and more — install in seconds
 - **Smart tech stack detection** — identifies frameworks, libraries, and patterns from your project files
 - **Post-generation validation** — checks YAML frontmatter, tool names, glob patterns, and content quality with auto-fix
 
