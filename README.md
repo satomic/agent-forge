@@ -5,7 +5,8 @@
 </p>
 
 <p align="center">
-  Generate, manage, and validate GitHub Copilot customization files — agents, prompts, instructions, skills, hooks, MCP servers, and agentic workflows — with an interactive CLI and built-in use case gallery.
+  <strong>Set up GitHub Copilot for your project in one command.</strong><br/>
+  Generate agents, prompts, instructions, skills, hooks, MCP servers, and workflows — interactively.
 </p>
 
 <p align="center">
@@ -13,99 +14,256 @@
   <a href="https://github.com/jiratouchmhp/agent-forge/blob/main/LICENSE"><img src="https://img.shields.io/github/license/jiratouchmhp/agent-forge" alt="license"/></a>
 </p>
 
-<p align="center">
-  <strong>One command to set up. Copilot to extend.</strong>
-</p>
+---
 
-## Get Started
+## What is AGENT-FORGE?
 
-### Install & Initialize
+AGENT-FORGE is a CLI tool that helps you configure GitHub Copilot for your project. Instead of manually creating `.github/` customization files, you run one command and the CLI handles everything:
+
+- **Pick from 11 ready-to-use templates** — code review, testing, documentation, deployment, and more
+- **Generate custom agents with AI** — describe what you need, and AGENT-FORGE creates tailored Copilot files
+- **Auto-detect your tech stack** — scans your project and generates configurations that match your setup
+- **Validate your config** — checks that your Copilot customization files are correct
+
+---
+
+## Quick Start
 
 ```bash
-# One-shot (no install needed)
 npx @agent-forge-copilot/cli init
-
-# Or install globally
-npm install -g @agent-forge-copilot/cli
-forge init
 ```
 
-### What Happens when you run `forge init`:
+That's it. The CLI walks you through everything interactively.
 
-- **New project** — prompts for a description of what to automate, then generates custom Copilot artifacts using AI.
-- **Existing project** — scans your workspace (detects tech stack, project type, existing `.github/` files), then generates tailored customizations.
-- **Gallery** — pick from **11 pre-built use case templates**:
+> **Want to install globally?** Run `npm install -g @agent-forge-copilot/cli`, then use `forge init` instead.
+
+### What happens when you run it
+
+The CLI asks you three things:
+
+**1. What's your starting point?**
 
 ```
-? Pick use cases to install: (space to select)
-◉ Code Review Agent — reviews PRs for quality & security
-◯ Testing Workflow — TDD agent pipeline
-◉ Documentation Generator — auto-generates docs from code
-◯ Deployment Guardian — pre-deploy validation
-◯ Onboarding Assistant — helps new devs understand codebase
-◯ Refactoring Coach — suggests and validates refactors
-◯ Code Quality Hooks — auto-format & block dangerous commands
-◯ Session Logging Hooks — audit trail for compliance
-◯ Issue Triage Workflow — auto-label & assign issues with AI
-◯ Daily Activity Report — scheduled repository summary
-◯ Dev Tools MCP Servers — GitHub & Playwright tool servers
-
-✓ Code Review Agent (4 files)
-✓ Documentation Generator (4 files)
-
-✓ AGENT-FORGE initialized!
+? How would you like to start?
+❯ New project        — describe what to build, AI generates Copilot files
+  Existing project   — scans your code, generates files that fit your stack
+  Gallery            — pick from 11 pre-built templates
 ```
 
-After init, AGENT-FORGE also prompts you to select a **generation mode** — choosing what types of artifacts to create:
+**2. What do you want to generate?**
 
-| Mode | Description |
-|------|-------------|
-| **Auto-detect** | Scans your project and generates everything automatically *(recommended for existing projects)* |
-| **Custom** | Describe your use case — generates agents + instructions + prompts + skills *(recommended for new projects)* |
-| **Pick & choose** | Select which artifact types to generate individually |
-| **MCP servers** | Add tool servers to `.vscode/mcp.json` |
-| **Hooks** | Add lifecycle automation (format, lint, security) |
-| **Workflows** | Create GitHub Actions with AI automation |
+```
+? What would you like to generate?
+❯ Auto-detect     — scans your project, generates everything (recommended)
+  Custom          — describe your use case, AI creates tailored files
+  Pick & choose   — select specific artifact types
+  MCP servers     — add tool servers to .vscode/mcp.json
+  Hooks           — add lifecycle automation (format, lint, security)
+  Workflows       — create GitHub Actions with AI automation
+```
 
-> **AI vs. Static generation:** If the [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-in-the-command-line) (`copilot`) is installed, `init` and `generate` use it with multi-agent orchestration to produce AI-generated artifacts tailored to your description. Without it, AGENT-FORGE falls back to pre-built static templates.
+**3. Describe your use case** (for AI generation)
+
+```
+? Describe what you want to automate:
+> API rate limiter with per-tenant quotas
+```
+
+Done. Your files are generated in `.github/`.
+
+### What gets created
+
+```
+.github/
+├── agents/          # AI personas — define what Copilot can do
+├── prompts/         # Slash commands — shortcuts you type in chat
+├── instructions/    # Rules — automatically applied to matching files
+├── skills/          # Knowledge packs — domain info agents can reference
+├── hooks/           # Automation — scripts triggered by agent events
+├── workflows/       # GitHub Actions with AI automation
+└── copilot-instructions.md   # Project-wide Copilot config
+.vscode/
+└── mcp.json         # External tool servers (if selected)
+```
+
+---
+
+## Gallery: Pre-Built Templates
+
+Instead of generating from scratch, you can pick from **11 ready-to-use templates** during `forge init`:
+
+**Agent Bundles** (each includes an agent + prompt + instructions + skill):
+- **Code Review** — reviews PRs for quality, security, and best practices
+- **Testing** — TDD pipeline, writes tests, identifies coverage gaps
+- **Documentation** — auto-generates docs from code structure
+- **Deployment** — pre-deploy validation for config, env vars, dependencies
+- **Onboarding** — helps new devs understand the codebase
+- **Refactoring** — identifies code smells, guides safe improvements
+
+**Hooks:**
+- **Code Quality** — auto-format code after edits, block dangerous commands
+- **Session Logging** — audit trail for compliance
+
+**Workflows:**
+- **Issue Triage** — auto-label, prioritize, and assign issues with AI
+- **Daily Report** — scheduled summary of repository activity
+
+**MCP Config:**
+- **Dev Tools** — starter config with GitHub and Playwright tool servers
+
+Install specific templates without the interactive flow:
+
+```bash
+forge init --mode gallery --use-cases code-review,testing
+```
+
+---
+
+## Common Tasks
+
+### Add code review to an existing project
+
+```bash
+forge init --mode gallery --use-cases code-review
+```
+
+Installs 4 files: a code review agent, a prompt, instructions, and a skill.
+
+### Generate custom agents with AI
+
+```bash
+forge generate "Security vulnerability scanner"
+```
+
+Describe what you need and AGENT-FORGE creates tailored Copilot files. If the [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-in-the-command-line) is installed, it uses a multi-agent orchestration pipeline (9 specialized writer agents) to produce high-quality output. Without it, you get solid static templates.
+
+### Generate only specific artifact types
+
+```bash
+forge generate "CI/CD automation" --mode hooks
+forge generate "Dev tooling" --mode mcp-server
+forge generate "Testing tools" --mode on-demand --types agent,hook
+```
+
+### Check your setup
+
+```bash
+forge check
+```
+
+Verifies that Node.js, VS Code, Git, GitHub CLI, Copilot CLI, and Docker are available.
+
+### See what's installed
+
+```bash
+forge list
+```
+
+Shows which Copilot customization files exist in your project and which gallery templates are available.
+
+### Validate your config files
+
+```bash
+forge validate
+```
+
+Checks your `.github/` customization files for schema errors and quality issues.
+
+---
+
+## Prerequisites
+
+**Required:**
+- **Node.js 18+**
+- **VS Code** with the GitHub Copilot extension (and `chat.agent.enabled: true` in settings)
+
+**Recommended:**
+- **GitHub Copilot CLI** — enables AI-powered generation instead of static templates (`npm install -g @github/copilot`)
+- **Git** — for version control
+
+**Optional:**
+- **GitHub CLI** (`gh`) — needed for agentic workflows
+- **Docker** — needed by some MCP servers
+
+Run `forge check` to verify everything in one step.
+
+---
+
+## How It Works
+
+AGENT-FORGE has two generation paths:
+
+**With GitHub Copilot CLI installed** — the CLI creates a temporary workspace, launches a multi-agent orchestration system (planner → orchestrator → 9 specialized writer agents), and generates AI-tailored artifacts based on your description. The results are validated, auto-fixed, and copied into your project.
+
+**Without Copilot CLI** (or with `--static`) — the CLI generates files from built-in TypeScript templates. Same artifact types, but generic content instead of AI-tailored output.
+
+```
+forge init / generate
+        │
+        ├── Copilot CLI found? ──▶ AI Generation
+        │                          • Plans what to create
+        │                          • 9 writer agents generate files
+        │                          • Auto-validates & fixes
+        │
+        └── No Copilot CLI ─────▶ Static Generation
+                                   • Built-in templates
+                                   • Direct file generation
+```
+
+---
 
 ## CLI Reference
 
-| Command | Description |
+| Command | What it does |
 |---------|-------------|
-| `forge init` | Interactive setup — 3 modes: new project, existing project, or gallery |
-| `forge generate <description>` | Generate customization files directly into `.github/` |
+| `forge init` | Interactive setup wizard |
+| `forge generate <description>` | Generate Copilot files from a description |
 | `forge list` | Show installed and available use cases |
-| `forge validate [scope]` | Validate customization files for schema and quality |
-| `forge check` | Verify prerequisites (Node.js, VS Code, Git, GitHub CLI, Copilot CLI, Docker) |
+| `forge validate` | Check config files for errors |
+| `forge check` | Verify prerequisites |
 
-### Init Options
+<details>
+<summary><strong>forge init — all options</strong></summary>
 
 | Flag | Description |
 |------|-------------|
 | `--mode <mode>` | Skip mode prompt — `new`, `existing`, or `gallery` |
 | `--description <text>` | Use case description (skip prompt) |
 | `--model <model>` | AI model to use (skip prompt) |
-| `--generation-mode <mode>` | Generation mode — `discovery`, `full`, `on-demand`, `mcp-server`, `hooks`, `agentic-workflow` |
+| `--generation-mode <mode>` | `discovery`, `full`, `on-demand`, `mcp-server`, `hooks`, `agentic-workflow` |
 | `--types <types>` | Comma-separated artifact types for on-demand mode (e.g., `agent,hook,mcp-server`) |
 | `--use-cases <ids>` | Comma-separated gallery IDs (skip prompt) |
 | `--force` | Overwrite existing files |
 
 ```bash
-forge init                                        # Fully interactive
-forge init --mode gallery --use-cases code-review,testing  # Non-interactive gallery clone
-forge init --mode existing --description "CI/CD pipeline guardian"  # Add to current project
+# Fully interactive
+forge init
+
+# Install gallery templates non-interactively
+forge init --mode gallery --use-cases code-review,testing
+
+# Add to existing project with a description
+forge init --mode existing --description "CI/CD pipeline guardian"
+
+# New project with a specific model
 forge init --mode new --description "API rate limiter" --model claude-sonnet-4.6
-forge init --mode existing --generation-mode hooks  # Generate only hooks for current project
+
+# Generate only hooks for an existing project
+forge init --mode existing --generation-mode hooks
+
+# Pick specific artifact types
 forge init --mode new --generation-mode on-demand --types agent,hook,mcp-server
 ```
 
-### Generate Options
+</details>
+
+<details>
+<summary><strong>forge generate — all options</strong></summary>
 
 | Flag | Description |
 |------|-------------|
 | `--model <model>` | AI model to use (skip prompt) |
-| `--mode <mode>` | Generation mode — `discovery`, `full`, `on-demand`, `mcp-server`, `hooks`, `agentic-workflow` |
+| `--mode <mode>` | `discovery`, `full`, `on-demand`, `mcp-server`, `hooks`, `agentic-workflow` |
 | `--types <types>` | Comma-separated artifact types for on-demand mode |
 | `--static` | Force static template generation (skip Copilot CLI) |
 
@@ -119,7 +277,10 @@ forge generate "Issue management" --mode agentic-workflow
 forge generate "Testing tools" --mode on-demand --types agent,hook,mcp-server
 ```
 
-### Model Selection
+</details>
+
+<details>
+<summary><strong>Model selection</strong></summary>
 
 When using AI generation, you can choose a model interactively or pass `--model`:
 
@@ -130,31 +291,10 @@ When using AI generation, you can choose a model interactively or pass `--model`
 | `gpt-5.2-codex` | Balanced — strong code generation |
 | `claude-opus-4.6` | Slowest — highest quality output |
 
-## What Gets Installed
+</details>
 
-### Gallery Use Cases (pick during init)
-
-| Use Case | Type | Description |
-|----------|------|-------------|
-| **Code Review** | Agent bundle | Reviews PRs for code quality, security, performance, and best practices |
-| **Testing** | Agent bundle | TDD pipeline — writes tests, identifies coverage gaps, ensures quality |
-| **Documentation** | Agent bundle | Auto-generates docs from code structure, comments, and conventions |
-| **Deployment** | Agent bundle | Pre-deploy validation — config, env vars, dependencies, readiness |
-| **Onboarding** | Agent bundle | Helps new devs understand the codebase — architecture, patterns, conventions |
-| **Refactoring** | Agent bundle | Identifies code smells and guides safe, incremental improvements |
-| **Code Quality Hooks** | Hooks | Auto-format code after edits and block dangerous terminal commands |
-| **Session Logging** | Hooks | Audit trail — log session start/stop and tool usage for compliance |
-| **Issue Triage** | Workflow | Auto-label, prioritize, and assign new issues using AI |
-| **Daily Report** | Workflow | Scheduled daily summary of repository activity as an issue |
-| **Dev Tools MCP** | MCP config | Starter MCP server config with GitHub and Playwright servers |
-
-Agent bundles install 4 files each: an agent, a prompt (slash command), an instruction (quality rules), and a skill (domain knowledge).
-
-### AI-Generated Artifacts
-
-When using `forge init` or `forge generate` with a description, AGENT-FORGE generates custom artifacts directly into `.github/`. The output depends on the generation mode you select — it can include any combination of agents, prompts, instructions, skills, hooks, MCP server configs, and agentic workflows.
-
-### Artifact Types
+<details>
+<summary><strong>Artifact types reference</strong></summary>
 
 | Type | File Pattern | Purpose |
 |------|-------------|---------|
@@ -164,87 +304,13 @@ When using `forge init` or `forge generate` with a description, AGENT-FORGE gene
 | Skill | `SKILL.md` | Domain knowledge loaded on-demand by agents |
 | Hook | `.github/hooks/*.json` | Lifecycle automation — scripts triggered on agent events |
 | MCP Server | `.vscode/mcp.json` | External tool servers for AI-powered development |
-| Agentic Workflow | `.github/workflows/*.md` | GitHub Actions with AI automation (IssueOps, ChatOps, etc.) |
+| Agentic Workflow | `.github/workflows/*.md` | GitHub Actions with AI automation |
 
-## How It Works
+</details>
 
-### Architecture
-
-AGENT-FORGE has two generation paths:
-
-**1. AI-powered generation** (requires [GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-in-the-command-line))
-
-The CLI prepares a temporary workspace with a multi-agent orchestration system, then launches the Copilot CLI to generate artifacts tailored to your description. The orchestrator coordinates specialized writer agents that each handle a specific artifact type:
-
-| Agent | Role |
-|-------|------|
-| `forge-orchestrator` | Coordinates the entire generation pipeline |
-| `forge-generator` | Single-pass artifact generation (legacy fallback) |
-| `forge-agent-writer` | Writes `.agent.md` files |
-| `forge-prompt-writer` | Writes `.prompt.md` files |
-| `forge-instruction-writer` | Writes `.instructions.md` files |
-| `forge-skill-writer` | Writes `SKILL.md` files |
-| `forge-hook-writer` | Writes hook configurations and scripts |
-| `forge-mcp-writer` | Writes MCP server configurations |
-| `forge-workflow-writer` | Writes agentic workflow definitions |
-
-Generated artifacts are copied back from the temp workspace into your project's `.github/` directory.
-
-**2. Static generation** (fallback when Copilot CLI is not available, or with `--static`)
-
-Generates pre-built template files programmatically from inline TypeScript templates. Produces the same artifact types but with generic content instead of AI-tailored output.
-
-### Generation Flow
-
-```
-                                    ┌──────────────────┐
-                               Yes  │  AI Generation   │
-                             ┌─────▶│                  │
-┌─────────────────┐     ┌────┴─────────────┐  │ • Temp workspace │
-│  forge init /   │     │ Copilot CLI      │  │ • 9 writer agents│
-│  forge generate │────▶│ found?           │  │ • Copy results   │
-│                 │     └────┬─────────────┘  └──────────────────┘
-│ • Description   │          │
-│ • Mode select   │     No   │
-│ • Model select  │          ▼
-└─────────────────┘     ┌──────────────────┐
-                        │ Static Generation│
-                        │                  │
-                        │ • Inline templates│
-                        │ • Direct file gen │
-                        └──────────────────┘
-```
-
-## Generating Custom Use Cases
-
-### From the CLI
-
-```bash
-forge generate "API rate limiter with per-tenant limits"
-```
-
-With the Copilot CLI installed, this launches the multi-agent orchestration system to generate AI-tailored artifacts directly into `.github/`.
-
-Without the Copilot CLI (or with `--static`), it generates pre-built template files instead.
-
-## Prerequisites
-
-| Tool | Required | Notes |
-|------|----------|-------|
-| **Node.js** 18+ | Yes | Runtime |
-| **VS Code** (or Insiders) | Yes | With GitHub Copilot extension |
-| **GitHub Copilot** | Yes | Subscription with Copilot Chat enabled |
-| **Agent mode** | Yes | `chat.agent.enabled: true` in VS Code settings |
-| **Git** | Recommended | For version control |
-| **GitHub Copilot CLI** | Recommended | Enables AI-powered multi-agent generation (`npm install -g @github/copilot`) |
-| **GitHub CLI** (`gh`) | Optional | For agentic workflows and GitHub integration |
-| **Docker** | Optional | Required by some MCP servers |
-
-Run `forge check` to verify your setup.
+---
 
 ## Contributing
-
-### Development
 
 ```bash
 git clone https://github.com/jiratouchmhp/agent-forge.git
@@ -254,7 +320,8 @@ npm run build
 node dist/index.js init --help
 ```
 
-### Project Structure
+<details>
+<summary><strong>Project structure</strong></summary>
 
 ```
 src/
@@ -277,6 +344,8 @@ src/
 │   └── gallery/          # Pre-built use case templates (11 use cases)
 └── types.ts              # Shared TypeScript types
 ```
+
+</details>
 
 ## License
 

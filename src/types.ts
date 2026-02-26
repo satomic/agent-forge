@@ -124,6 +124,8 @@ export interface ValidationFinding {
   message: string;
   line?: number;
   field?: string;
+  /** Whether this finding can be auto-fixed by the LLM */
+  fixable?: boolean;
 }
 
 /** Full validation report */
@@ -132,6 +134,8 @@ export interface ValidationReport {
   warnings: ValidationFinding[];
   passed: string[];
   summary: string;
+  /** Count of findings that can be auto-fixed by the LLM */
+  fixableCount: number;
 }
 
 /** Init wizard mode */
@@ -154,6 +158,13 @@ export interface GenerateOptions {
   model?: string;
   mode?: GenerationMode;
   types?: ArtifactType[];
+}
+
+/** Options for the validate command */
+export interface ValidateOptions {
+  fix?: boolean;
+  noFix?: boolean;
+  model?: string;
 }
 
 // ─── Plan-then-Execute pipeline types ───

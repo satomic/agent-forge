@@ -792,3 +792,51 @@ function buildDiscoveryModeInstructions(
     `Description: "${description}"`,
   ];
 }
+
+// ─── LLM-powered validation fix ───
+
+/**
+ * Build a prompt that asks the LLM to fix specific validation findings.
+ * Returns corrected file contents as a JSON map { filePath: correctedContent }.
+ */
+export function buildValidationFixPrompt(
+  findings: Array<{ file: string; message: string; field?: string; severity: string }>,
+  fileContents: Map<string, string>,
+): string {
+  const filesSection = [...fileContents.entries()]
+    .map(([fp, content]) => {
+      const relFindings = findings.filter((f) => f.file === fp);
+      const findingsList = relFindings
+        .map((f) => `  - [${f.severity}] ${f.message}${f.field ? ` (field: ${f.field})` : ""}`)
+        .join("\n");
+      return [
+        `### File: ${fp}`,
+        `**Issues:**`,
+        findingsList,
+        `**Current content:**`,
+        "```",
+        content,
+        "```",
+      ].join("\n");
+    })
+    .join("\n\n");
+
+  return `You are a GitHub Copilot customization file expert. Fix the validation issues in these files.
+
+## Issues to Fix
+
+${filesSection}
+
+## Rules
+- Fix ONLY the reported issues. Preserve all other content exactly as-is.
+- For unrecognized tool names: replace with the closest valid VS Code Copilot tool (read, edit, search, run_in_terminal, file_search, grep_search, semantic_search, list_dir, get_errors, read_file, fetch_webpage, memory, get_terminal_output, get_changed_files, test_failure, create_file, replace_string_in_file, multi_replace_string_in_file, read_notebook_cell_output, run_notebook_cell, edit_notebook_file, open_browser_page, runSubagent, search_subagent, run_vscode_command, vscode_renameSymbol, vscode_listCodeUsages, manage_todo_list, tool_search_tool_regex).
+- For missing "USE FOR:" / "DO NOT USE FOR:" in skill descriptions: add appropriate trigger phrases based on the skill's content.
+- For placeholder text (TODO, PLACEHOLDER, etc.): replace with meaningful content based on context.
+- For empty/thin body content: expand with domain-specific content.
+- For user-invocable as string: convert to boolean.
+- For missing applyTo: infer from the instruction file name and content.
+- Keep YAML frontmatter valid. Preserve the --- delimiters.
+
+Output ONLY a JSON object mapping file paths to their corrected full content. No markdown fences, no explanation.
+Example: {"path/to/file.md": "---\\nname: ...\\n---\\nBody..."}`;
+}

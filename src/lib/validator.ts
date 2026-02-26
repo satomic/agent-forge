@@ -6,6 +6,76 @@ import type {
   ValidationFinding,
   ArtifactType,
 } from "../types.js";
+import { isCopilotCliInstalled, callCopilotForJson } from "./copilot-cli.js";
+
+// ─── Known VS Code Copilot tool names ───
+
+/** Recognized VS Code Copilot tool names. Unknown tools trigger a warning. */
+const VALID_VSCODE_TOOLS = new Set([
+  // Core file operations
+  "read", "edit", "search",
+  // Extended file tools
+  "read_file", "create_file", "replace_string_in_file", "multi_replace_string_in_file",
+  "file_search", "grep_search", "semantic_search", "list_dir",
+  // Terminal
+  "run_in_terminal", "get_terminal_output",
+  // Diagnostics
+  "get_errors", "test_failure",
+  // Git / VCS
+  "get_changed_files",
+  // Notebook
+  "read_notebook_cell_output", "run_notebook_cell", "edit_notebook_file",
+  // Browser / web
+  "fetch_webpage", "open_browser_page",
+  // Memory
+  "memory",
+  // Subagents
+  "runSubagent", "search_subagent",
+  // VS Code commands
+  "run_vscode_command", "vscode_renameSymbol", "vscode_listCodeUsages",
+  // Todo
+  "manage_todo_list",
+  // Tool discovery
+  "tool_search_tool_regex",
+]);
+
+/**
+ * Compute Levenshtein distance between two strings.
+ * Used to suggest the closest valid tool name for typos.
+ */
+function levenshtein(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0) as number[]);
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[m][n];
+}
+
+/**
+ * Find the closest matching tool name from the known registry.
+ * Returns the suggestion only if the distance is small enough to be a plausible typo.
+ */
+function suggestToolName(unknown: string): string | null {
+  let best = "";
+  let bestDist = Infinity;
+  for (const known of VALID_VSCODE_TOOLS) {
+    const dist = levenshtein(unknown.toLowerCase(), known.toLowerCase());
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = known;
+    }
+  }
+  // Only suggest if distance is at most 3 (reasonable typo range)
+  return bestDist <= 3 ? best : null;
+}
 
 // ─── Post-generation auto-fix ───
 
@@ -21,7 +91,7 @@ export async function postGenerationValidateAndFix(
 ): Promise<ValidationReport> {
   const githubDir = path.join(targetDir, ".github");
   if (!(await fs.pathExists(githubDir))) {
-    return { errors: [], warnings: [], passed: [], summary: "No .github/ directory found" };
+    return { errors: [], warnings: [], passed: [], summary: "No .github/ directory found", fixableCount: 0 };
   }
 
   // Phase 1: Auto-fix all markdown artifacts
@@ -213,12 +283,15 @@ export async function validateDirectory(dir: string): Promise<ValidationReport> 
   const errors = findings.filter((f) => f.severity === "error");
   const warnings = findings.filter((f) => f.severity === "warning");
 
+  const allFindings = [...errors, ...warnings];
+  const fixableCount = allFindings.filter((f) => f.fixable).length;
+
   const summary =
     errors.length === 0
       ? `All checks passed (${passed.length} files validated, ${warnings.length} warnings)`
       : `${errors.length} error(s), ${warnings.length} warning(s) across ${passed.length + errors.length} files`;
 
-  return { errors, warnings, passed, summary };
+  return { errors, warnings, passed, summary, fixableCount };
 }
 
 const VALID_HOOK_EVENTS = new Set([
@@ -531,6 +604,7 @@ async function validateFile(
         message:
           'Field "user-invocable" must be a boolean (true/false), not a string',
         field: "user-invocable",
+        fixable: true,
       });
       hasError = true;
     }
@@ -540,8 +614,26 @@ async function validateFile(
         file: filePath,
         message: 'Field "tools" must be an array',
         field: "tools",
+        fixable: true,
       });
       hasError = true;
+    }
+  }
+
+  // Validate tool names against known VS Code Copilot tools
+  if ((type === "agent" || type === "prompt") && Array.isArray(frontmatter.tools)) {
+    for (const tool of frontmatter.tools as string[]) {
+      if (typeof tool === "string" && !VALID_VSCODE_TOOLS.has(tool)) {
+        const suggestion = suggestToolName(tool);
+        const hint = suggestion ? ` Did you mean "${suggestion}"?` : "";
+        findings.push({
+          severity: "warning",
+          file: filePath,
+          message: `Tool "${tool}" is not a recognized VS Code Copilot tool.${hint} Known tools: ${[...VALID_VSCODE_TOOLS].slice(0, 8).join(", ")}, ...`,
+          field: "tools",
+          fixable: !!suggestion,
+        });
+      }
     }
   }
 
@@ -554,6 +646,49 @@ async function validateFile(
         message:
           "Missing applyTo field — instruction will not auto-apply to any files",
         field: "applyTo",
+        fixable: true,
+      });
+    }
+  }
+
+  // Skill-specific checks: trigger phrases
+  if (type === "skill" && frontmatter.description) {
+    const desc = frontmatter.description as string;
+    const hasUseFor = /USE\s+FOR:/i.test(desc);
+    const hasDoNotUseFor = /DO\s+NOT\s+USE\s+FOR:/i.test(desc);
+
+    if (!hasUseFor) {
+      findings.push({
+        severity: "warning",
+        file: filePath,
+        message: 'Skill description missing "USE FOR:" trigger phrases — Copilot may not load this skill on-demand',
+        field: "description",
+        fixable: true,
+      });
+    } else {
+      // Count trigger phrases after USE FOR:
+      const useForMatch = desc.match(/USE\s+FOR:\s*(.+?)(?:DO\s+NOT|DO NOT|$)/is);
+      if (useForMatch) {
+        const phrases = useForMatch[1].split(/,/).filter((p) => p.trim().length > 0);
+        if (phrases.length < 3) {
+          findings.push({
+            severity: "warning",
+            file: filePath,
+            message: `Skill "USE FOR:" has only ${phrases.length} trigger phrase(s) — recommend at least 3 for reliable on-demand loading`,
+            field: "description",
+            fixable: true,
+          });
+        }
+      }
+    }
+
+    if (!hasDoNotUseFor) {
+      findings.push({
+        severity: "warning",
+        file: filePath,
+        message: 'Skill description missing "DO NOT USE FOR:" exclusion phrases — may cause incorrect skill loading',
+        field: "description",
+        fixable: true,
       });
     }
   }
@@ -564,11 +699,66 @@ async function validateFile(
       severity: "warning",
       file: filePath,
       message: "File has empty body content",
+      fixable: true,
     });
+  }
+
+  // Body content quality checks
+  if (body.trim()) {
+    validateBodyQuality(filePath, type, body, findings);
   }
 
   if (!hasError) {
     passed.push(filePath);
+  }
+}
+
+/**
+ * Validate body content quality — detect placeholders, generic text, and low-content bodies.
+ */
+function validateBodyQuality(
+  filePath: string,
+  type: ArtifactType,
+  body: string,
+  findings: ValidationFinding[],
+): void {
+  // Detect common placeholder/TODO patterns
+  const placeholderPatterns = [
+    { pattern: /\bTODO\b/i, label: "TODO" },
+    { pattern: /\bPLACEHOLDER\b/i, label: "PLACEHOLDER" },
+    { pattern: /\bINSERT\s+HERE\b/i, label: "INSERT HERE" },
+    { pattern: /\bLorem\s+ipsum\b/i, label: "Lorem ipsum" },
+    { pattern: /\byour\s+\w+\s+here\b/i, label: "your ... here" },
+    { pattern: /\bFIXME\b/i, label: "FIXME" },
+    { pattern: /\bXXX\b/, label: "XXX" },
+    { pattern: /\[\.\.\.[^\]]*\]/, label: "[...] placeholder" },
+  ];
+
+  for (const { pattern, label } of placeholderPatterns) {
+    if (pattern.test(body)) {
+      findings.push({
+        severity: "warning",
+        file: filePath,
+        message: `Body contains ${label} placeholder text — consider replacing with specific content`,
+        fixable: true,
+      });
+      break; // One placeholder warning is enough
+    }
+  }
+
+  // Minimum content check for agents and skills (should have substantive content)
+  if (type === "agent" || type === "skill") {
+    const contentLines = body
+      .split("\n")
+      .filter((l) => l.trim().length > 0 && !l.trim().startsWith("#"));
+    if (contentLines.length < 3) {
+      findings.push({
+        severity: "warning",
+        file: filePath,
+        message: `Body has very little content (${contentLines.length} non-heading lines) — agents and skills need substantive instructions`,
+        fixable: true,
+      });
+    }
   }
 }
 
@@ -585,4 +775,93 @@ function parseFrontmatter(content: string): {
   } catch {
     return { frontmatter: null, body: content };
   }
+}
+
+// ─── LLM-powered auto-fix ───
+
+/**
+ * Fix validation findings using the Copilot CLI LLM.
+ * Collects fixable findings, reads their source files, sends to the LLM,
+ * writes corrected content back, then re-validates to confirm fixes.
+ *
+ * Returns: { fixed: number of files fixed, report: updated validation report }
+ */
+export async function fixWithLLM(
+  report: ValidationReport,
+  targetDir: string,
+  options?: { model?: string },
+): Promise<{ fixed: number; report: ValidationReport }> {
+  const allFindings = [...report.errors, ...report.warnings];
+  const fixableFindings = allFindings.filter((f) => f.fixable);
+
+  if (fixableFindings.length === 0) {
+    return { fixed: 0, report };
+  }
+
+  // Collect unique file paths that have fixable issues
+  const filePaths = [...new Set(fixableFindings.map((f) => f.file))];
+  const fileContents = new Map<string, string>();
+
+  for (const fp of filePaths) {
+    try {
+      const content = await fs.readFile(fp, "utf-8");
+      fileContents.set(fp, content);
+    } catch {
+      // Skip files that can't be read
+    }
+  }
+
+  if (fileContents.size === 0) {
+    return { fixed: 0, report };
+  }
+
+  // Build the prompt and call the LLM
+  const { buildValidationFixPrompt } = await import("./copilot-cli.js");
+  const prompt = buildValidationFixPrompt(
+    fixableFindings.map((f) => ({
+      file: f.file,
+      message: f.message,
+      field: f.field,
+      severity: f.severity,
+    })),
+    fileContents,
+  );
+
+  let corrections: Record<string, string>;
+  try {
+    corrections = await callCopilotForJson<Record<string, string>>(
+      targetDir,
+      prompt,
+      { model: options?.model ?? "claude-sonnet-4.6", timeoutMs: 60_000 },
+    );
+  } catch {
+    return { fixed: 0, report };
+  }
+
+  // Write corrected files
+  let fixedCount = 0;
+  for (const [fp, correctedContent] of Object.entries(corrections)) {
+    // Resolve the path — it may be relative or absolute in the LLM response
+    const resolvedPath = path.isAbsolute(fp) ? fp : path.join(targetDir, fp);
+
+    // Safety: only write to files that were part of the original findings
+    if (!fileContents.has(resolvedPath) && !filePaths.includes(fp)) {
+      continue;
+    }
+
+    const writePath = fileContents.has(resolvedPath) ? resolvedPath : fp;
+
+    try {
+      if (typeof correctedContent === "string" && correctedContent.trim().length > 0) {
+        await fs.writeFile(writePath, correctedContent);
+        fixedCount++;
+      }
+    } catch {
+      // Skip files that can't be written
+    }
+  }
+
+  // Re-validate after fixes
+  const updatedReport = await validateDirectory(targetDir);
+  return { fixed: fixedCount, report: updatedReport };
 }

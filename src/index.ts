@@ -4,7 +4,7 @@ import { generateCommand } from "./commands/generate.js";
 import { listCommand } from "./commands/list.js";
 import { validateCommand } from "./commands/validate.js";
 import { checkCommand } from "./commands/check.js";
-import type { InitMode, GenerationMode, ArtifactType } from "./types.js";
+import type { InitMode, GenerationMode, ArtifactType, ValidateOptions } from "./types.js";
 
 const program = new Command();
 
@@ -65,9 +65,18 @@ program
 
 program
   .command("validate [scope]")
-  .description("Validate all customization files for schema and quality")
-  .action(async (scope?: string) => {
-    await validateCommand(scope);
+  .description("Validate all customization files for schema, tool names, and content quality")
+  .option("--fix", "Auto-fix issues using AI (GitHub Copilot CLI)")
+  .option("--no-fix", "Skip the interactive fix prompt")
+  .option("--model <model>", "Model to use for AI-powered fixes")
+  .action(async (scope: string | undefined, opts) => {
+    // Commander treats --no-fix as fix=false, --fix as fix=true, neither as fix=undefined
+    const options: ValidateOptions = {
+      fix: opts.fix === true ? true : undefined,
+      noFix: opts.fix === false ? true : undefined,
+      model: opts.model,
+    };
+    await validateCommand(scope, options);
   });
 
 program
