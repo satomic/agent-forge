@@ -156,6 +156,70 @@ export interface GenerateOptions {
   types?: ArtifactType[];
 }
 
+// ─── Plan-then-Execute pipeline types ───
+
+/** A planned agent definition from the forge-planner */
+export interface PlannedAgent {
+  /** kebab-case file name (without .agent.md), e.g. "reactjs" */
+  name: string;
+  /** Human-readable title, e.g. "React Frontend" */
+  title: string;
+  /** One-line role description, e.g. "builds React UI components" */
+  role: string;
+  /** Domain category */
+  category: "frontend" | "backend" | "ai" | "general";
+  /** Detected/relevant tech stack */
+  techStack: string[];
+  /** Key responsibilities (fed to forge-agent-writer) */
+  responsibilities: string[];
+  /** Recommended applyTo glob for this agent's domain */
+  applyToGlob: string;
+  /** Per-agent instruction metadata */
+  instruction: {
+    /** What coding standards this instruction enforces */
+    description: string;
+  };
+  /** Per-agent skill metadata */
+  skill: {
+    /** Skill description with USE FOR / DO NOT USE FOR trigger phrases for on-demand loading */
+    description: string;
+  };
+}
+
+/** Structured generation plan produced by the forge-planner agent */
+export interface GenerationPlan {
+  /** Shared slug used for the prompt file */
+  slug: string;
+  /** Human-readable project title */
+  title: string;
+  /** Original use case description */
+  description: string;
+  /** Planned agents — each with its own aligned instruction + skill */
+  agents: PlannedAgent[];
+  /** Shared prompt metadata (one prompt routes to all agents) */
+  prompt: {
+    slug: string;
+    description: string;
+  };
+  /** Optional hook plan */
+  hooks?: {
+    slug: string;
+    events: string[];
+    description: string;
+  };
+  /** Optional MCP server plan */
+  mcp?: {
+    servers: string[];
+    description: string;
+  };
+  /** Optional workflow plan */
+  workflow?: {
+    slug: string;
+    trigger: string;
+    description: string;
+  };
+}
+
 /** A detected domain within a multi-stack description */
 export interface Domain {
   /** kebab-case identifier, e.g. "frontend" */

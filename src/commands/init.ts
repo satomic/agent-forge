@@ -8,6 +8,8 @@ import {
   prepareGenerationWorkspace,
   installGeneratedArtifacts,
   cleanupGenerationWorkspace,
+  readPlanFile,
+  prepareWorkspaceForPlan,
   generateUseCaseStatic,
   generateHooksStatic,
   generateMcpConfigStatic,
@@ -19,10 +21,11 @@ import { detectWorkspace } from "../lib/detector.js";
 import {
   isCopilotCliInstalled,
   launchCopilotCli,
-  buildGenerationPrompt,
-  buildOrchestrationPrompt,
+  buildPlanningPrompt,
+  buildOrchestrationPromptFromPlan,
   selectModel,
 } from "../lib/copilot-cli.js";
+import { postGenerationValidateAndFix } from "../lib/validator.js";
 import type { InitOptions, InitMode, GenerationMode, ArtifactType, WorkspaceInfo } from "../types.js";
 
 export const LOGO = `
@@ -201,7 +204,7 @@ async function handleExisting(
     description = description + techDesc;
   }
 
-  await runGeneration(targetDir, description, { ...options, generationMode, selectedTypes });
+  await runGeneration(targetDir, description, { ...options, generationMode, selectedTypes }, workspace);
   printNextSteps();
 }
 
@@ -263,6 +266,7 @@ async function runGeneration(
   targetDir: string,
   description: string,
   options: InitOptions,
+  workspace?: WorkspaceInfo,
 ): Promise<void> {
   const mode = options.generationMode ?? "full";
 
@@ -274,7 +278,7 @@ async function runGeneration(
     switch (mode) {
       case "discovery":
       case "full": {
-        const { files } = await generateUseCaseStatic(targetDir, description);
+        const { files } = await generateUseCaseStatic(targetDir, description, { model: options.model });
         allFiles.push(...files);
         break;
       }
@@ -296,7 +300,7 @@ async function runGeneration(
       case "on-demand": {
         const types = options.selectedTypes ?? ["agent", "instruction", "prompt", "skill"];
         if (types.some((t) => ["agent", "instruction", "prompt", "skill"].includes(t))) {
-          const { files } = await generateUseCaseStatic(targetDir, description);
+          const { files } = await generateUseCaseStatic(targetDir, description, { model: options.model });
           allFiles.push(...files);
         }
         if (types.includes("hook")) {
@@ -317,6 +321,16 @@ async function runGeneration(
 
     const slug = deriveProjectName(description);
     spinner.succeed("Generated!");
+
+    // Auto-fix and validate
+    const fixSpinner = ora("Validating & fixing artifacts...").start();
+    const report = await postGenerationValidateAndFix(targetDir);
+    if (report.errors.length === 0) {
+      fixSpinner.succeed(`Validated — ${report.passed.length} files passed${report.warnings.length > 0 ? `, ${report.warnings.length} warning(s)` : ""}`);
+    } else {
+      fixSpinner.warn(`${report.errors.length} error(s) remain after auto-fix`);
+    }
+
     printGeneratedFiles(slug, allFiles);
     printNoCopilotWarning();
     return;
@@ -328,27 +342,57 @@ async function runGeneration(
   const { tempDir, slug, title, domains } = await prepareGenerationWorkspace(description, mode);
   spinner.succeed("Workspace ready");
 
+  // Phase 1: Planning
   console.log();
-  console.log(chalk.bold("  Launching AGENT-FORGE Orchestrator..."));
+  console.log(chalk.bold("  Phase 1: Planning..."));
   console.log(chalk.dim(`  Model: ${model}`));
   console.log(chalk.dim(`  Mode: ${mode}`));
   if (domains.length > 1) {
     console.log(chalk.dim(`  Domains: ${domains.map((d) => d.title).join(", ")}`));
   }
+  console.log();
+
+  const planPrompt = buildPlanningPrompt(mode, slug, title, description, domains, workspace, options.selectedTypes);
+  const planExitCode = await launchCopilotCli(tempDir, planPrompt, { model, agent: "forge-planner" });
+
+  if (planExitCode !== 0) {
+    console.log(chalk.yellow("\n  ⚠  Planner exited with warnings."));
+  }
+
+  // Read the plan
+  const planSpinner = ora("Reading plan...").start();
+  const plan = await readPlanFile(tempDir);
+  planSpinner.succeed(`Plan ready — ${plan.agents.length} agent(s): ${plan.agents.map((a) => a.name).join(", ")}`);
+
+  // Prepare workspace directories for Phase 2 (skill subdirs, etc.)
+  await prepareWorkspaceForPlan(tempDir, plan);
+
+  // Phase 2: Orchestrated generation from plan
+  console.log();
+  console.log(chalk.bold("  Phase 2: Generating artifacts..."));
   console.log(chalk.dim("  Multi-agent orchestration — parallel sub-agent execution"));
   console.log();
 
-  const prompt = buildOrchestrationPrompt(mode, slug, title, description, domains, options.selectedTypes);
-  const exitCode = await launchCopilotCli(tempDir, prompt, { model });
+  const orchPrompt = buildOrchestrationPromptFromPlan(plan, mode);
+  const exitCode = await launchCopilotCli(tempDir, orchPrompt, { model, agent: "forge-orchestrator" });
 
-  const installed = await installGeneratedArtifacts(tempDir, targetDir, slug);
+  const installed = await installGeneratedArtifacts(tempDir, targetDir, plan.slug);
   // Fire-and-forget cleanup — don't block the success message
   cleanupGenerationWorkspace(tempDir).catch(() => {});
+
+  // Phase 3: Auto-fix and validate AI-generated artifacts
+  const fixSpinner2 = ora("Validating & fixing artifacts...").start();
+  const report = await postGenerationValidateAndFix(targetDir);
+  if (report.errors.length === 0) {
+    fixSpinner2.succeed(`Validated — ${report.passed.length} files passed${report.warnings.length > 0 ? `, ${report.warnings.length} warning(s)` : ""}`);
+  } else {
+    fixSpinner2.warn(`${report.errors.length} error(s) remain after auto-fix`);
+  }
 
   if (exitCode === 0) {
     console.log();
     console.log(chalk.green.bold("✓ Generated!"));
-    printGeneratedFiles(slug, installed);
+    printGeneratedFiles(plan.slug, installed);
   } else {
     console.log();
     console.log(chalk.yellow("⚠  Generation finished with warnings. Review the generated files."));

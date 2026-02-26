@@ -36,6 +36,24 @@ The **forge-orchestrator** delegates to specialized sub-agents:
 
 Each sub-agent writes only its own artifact type. The orchestrator coordinates them.
 
+## Generation Quality Standards
+
+Every generated artifact MUST meet these non-negotiable standards:
+
+1. **No generic filler** — Every responsibility, rule, and pattern must reference the described use case and tech stack. "Follow best practices" is never acceptable.
+2. **Explain the WHY** — Every technical standard and instruction rule must include reasoning (after an em dash or in parentheses). The AI uses reasoning to make correct edge-case decisions.
+3. **Tech-stack specificity** — Content must name the actual frameworks, libraries, and patterns relevant to the use case. A React agent must mention hooks, JSX, component patterns — not generic "frontend development."
+4. **Skill trigger precision** — Every skill `description` MUST include `USE FOR:` with 5-10 trigger phrases and `DO NOT USE FOR:` with 3-5 exclusion phrases. This controls on-demand context loading.
+5. **Minimum depth** — Each agent needs at least 4 domain-specific responsibilities. Each instruction file needs at least 3 rule sections with code examples. Each skill needs actionable patterns, not theory.
+
+## Reasoning Protocol
+
+All sub-agents must internally assess before generating:
+
+1. **Identify** the primary domain, technologies, and patterns from the prompt
+2. **Determine** what content is unique to this use case (skip anything a linter or generic docs already cover)
+3. **Self-check** the output against the Quality Standards above before finishing — if any item is generic or missing reasoning, revise it
+
 ## Rules
 
 - Generate files directly to the paths specified in the prompt

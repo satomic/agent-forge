@@ -87,6 +87,21 @@ Body structure:
 - Include `## When to Use` and `## When NOT to Use` sections
 - Keep under 4000 characters
 
+## Quality Criteria
+
+- **No generic boilerplate** — every responsibility, standard, and rule must reference the specific use case and tech stack
+- **Skill descriptions** must include `USE FOR:` with 5-10 trigger phrases and `DO NOT USE FOR:` with 3-5 exclusions
+- **Instruction files** must have specific `applyTo` globs matching the tech stack (not `**/*` unless truly universal)
+- **Agent responsibilities** must be domain-specific (minimum 4) — "Implement React hooks for state management" not "Develop frontend features"
+- **Technical standards** must include concrete patterns or constraints with reasoning
+
+## Example
+
+For a use case "React dashboard with Chart.js", a well-written agent file would include:
+- Specific responsibilities like "Build dashboard widget components using React hooks and Chart.js bindings"
+- Technical standards like "Use `useMemo` for Chart.js data transformations — prevents re-renders on every parent update"
+- NOT generic text like "Follow React best practices" or "Write clean code"
+
 ---
 
 ## Generation Process

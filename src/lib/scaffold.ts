@@ -3,7 +3,7 @@ import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
 import { mergeIntoExisting } from "./merger.js";
-import type { Domain, GenerationMode } from "../types.js";
+import type { Domain, GenerationMode, GenerationPlan } from "../types.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -102,7 +102,7 @@ export async function prepareGenerationWorkspace(
     dirPromises.push(
       fs.ensureDir(path.join(githubDir, "prompts")),
       fs.ensureDir(path.join(githubDir, "instructions")),
-      fs.ensureDir(path.join(githubDir, "skills", slug)),
+      fs.ensureDir(path.join(githubDir, "skills")),
     );
   }
   if (mode === "hooks" || mode === "on-demand") {
@@ -124,6 +124,7 @@ export async function prepareGenerationWorkspace(
   // Copy CLI templates: orchestrator + all sub-agents + instructions
   const cliTemplates = [
     "forge-orchestrator.agent.md",
+    "forge-planner.agent.md",
     "forge-agent-writer.agent.md",
     "forge-instruction-writer.agent.md",
     "forge-prompt-writer.agent.md",
@@ -185,6 +186,7 @@ export async function installGeneratedArtifacts(
   // Internal files to exclude from installation
   const internalFiles = new Set([
     "forge-orchestrator.agent.md",
+    "forge-planner.agent.md",
     "forge-generator.agent.md",
     "forge-agent-writer.agent.md",
     "forge-instruction-writer.agent.md",
@@ -193,6 +195,7 @@ export async function installGeneratedArtifacts(
     "forge-hook-writer.agent.md",
     "forge-mcp-writer.agent.md",
     "forge-workflow-writer.agent.md",
+    "forge-plan.json",
   ]);
 
   const copyResults = await Promise.all(
@@ -207,7 +210,9 @@ export async function installGeneratedArtifacts(
             const destDir = path.join(githubDir, dir);
             await fs.ensureDir(destDir);
             for (const f of filtered) {
-              await fs.copy(path.join(srcDir, f), path.join(destDir, f), { overwrite: false });
+              const destPath = path.join(destDir, f);
+              await fs.ensureDir(path.dirname(destPath));
+              await fs.copy(path.join(srcDir, f), destPath, { overwrite: false });
             }
             files.push(...filtered.map((f) => `${dir}/${f}`));
             break;
@@ -234,6 +239,22 @@ export async function installGeneratedArtifacts(
     }
   }
 
+  // Handle .github/copilot-instructions.md (generated project-level, not the internal template)
+  for (const root of searchRoots) {
+    const srcFile = path.join(root, "copilot-instructions.md");
+    if (await fs.pathExists(srcFile)) {
+      // Only copy if it's a generated file (contains project-specific content)
+      // not the internal workspace template (which contains "AGENT-FORGE Generation Workspace")
+      const content = await fs.readFile(srcFile, "utf-8");
+      if (!content.includes("AGENT-FORGE Generation Workspace")) {
+        const destFile = path.join(githubDir, "copilot-instructions.md");
+        await fs.copy(srcFile, destFile, { overwrite: false });
+        installed.push("copilot-instructions.md");
+        break;
+      }
+    }
+  }
+
   return installed;
 }
 
@@ -247,60 +268,227 @@ export async function cleanupGenerationWorkspace(tempDir: string): Promise<void>
 }
 
 /**
+ * Prepare the workspace directories for Phase 2 based on the plan.
+ * Pre-creates skill subdirectories and any other paths that the
+ * Copilot CLI's create_file tool cannot create on its own.
+ */
+export async function prepareWorkspaceForPlan(
+  tempDir: string,
+  plan: GenerationPlan,
+): Promise<void> {
+  const githubDir = path.join(tempDir, ".github");
+  const dirPromises: Promise<void>[] = [];
+
+  for (const agent of plan.agents) {
+    // Create skill subdirectory: .github/skills/{name}/
+    dirPromises.push(
+      fs.ensureDir(path.join(githubDir, "skills", agent.name)),
+    );
+    // Ensure instruction directory exists
+    dirPromises.push(
+      fs.ensureDir(path.join(githubDir, "instructions")),
+    );
+  }
+
+  // Ensure prompt directory exists
+  dirPromises.push(
+    fs.ensureDir(path.join(githubDir, "prompts")),
+  );
+
+  // Optional: hooks
+  if (plan.hooks) {
+    dirPromises.push(
+      fs.ensureDir(path.join(githubDir, "hooks", "scripts")),
+    );
+  }
+
+  // Optional: mcp
+  if (plan.mcp) {
+    dirPromises.push(
+      fs.ensureDir(path.join(tempDir, ".vscode")),
+    );
+  }
+
+  // Optional: workflow
+  if (plan.workflow) {
+    dirPromises.push(
+      fs.ensureDir(path.join(githubDir, "workflows")),
+    );
+  }
+
+  await Promise.all(dirPromises);
+}
+
+/**
+ * Read and parse the forge-plan.json written by the forge-planner agent.
+ * Searches multiple candidate locations within the temp workspace.
+ * Validates required fields and returns a typed GenerationPlan.
+ */
+export async function readPlanFile(tempDir: string): Promise<GenerationPlan> {
+  const candidates = [
+    path.join(tempDir, "forge-plan.json"),
+    path.join(tempDir, ".github", "forge-plan.json"),
+    path.join(tempDir, ".github", "agents", "forge-plan.json"),
+  ];
+
+  let raw: string | null = null;
+  let foundPath: string | null = null;
+
+  for (const candidate of candidates) {
+    if (await fs.pathExists(candidate)) {
+      raw = await fs.readFile(candidate, "utf-8");
+      foundPath = candidate;
+      break;
+    }
+  }
+
+  if (!raw || !foundPath) {
+    throw new Error(
+      `forge-plan.json not found. The planner agent did not produce a plan.\n` +
+      `Searched:\n${candidates.map((c) => `  - ${c}`).join("\n")}`,
+    );
+  }
+
+  let plan: GenerationPlan;
+  try {
+    plan = JSON.parse(raw) as GenerationPlan;
+  } catch (err) {
+    throw new Error(
+      `forge-plan.json is not valid JSON.\n` +
+      `Path: ${foundPath}\n` +
+      `Error: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  // Validate required fields
+  if (!plan.slug || typeof plan.slug !== "string") {
+    throw new Error("forge-plan.json missing required field: slug");
+  }
+  if (!plan.title || typeof plan.title !== "string") {
+    throw new Error("forge-plan.json missing required field: title");
+  }
+  if (!plan.description || typeof plan.description !== "string") {
+    throw new Error("forge-plan.json missing required field: description");
+  }
+  if (!Array.isArray(plan.agents) || plan.agents.length === 0) {
+    throw new Error("forge-plan.json must include at least one agent");
+  }
+
+  for (const agent of plan.agents) {
+    if (!agent.name || !agent.title || !agent.role || !agent.category) {
+      throw new Error(
+        `forge-plan.json agent "${agent.name || "(unnamed)"}" is missing required fields (name, title, role, category)`,
+      );
+    }
+    if (!Array.isArray(agent.responsibilities) || agent.responsibilities.length === 0) {
+      throw new Error(
+        `forge-plan.json agent "${agent.name}" must have at least one responsibility`,
+      );
+    }
+    // Validate per-agent instruction and skill (allow graceful fallback if missing)
+    if (!agent.instruction) {
+      agent.instruction = { description: `Coding standards for ${agent.title}` };
+    }
+    if (!agent.skill) {
+      agent.skill = { description: `${agent.title} domain knowledge. USE FOR: ${agent.techStack.join(", ") || agent.category}. DO NOT USE FOR: unrelated domains.` };
+    }
+  }
+
+  return plan;
+}
+
+/**
  * Generate a new use case using static templates (fallback).
- * Detects multiple domains (frontend/backend/AI) and generates
- * one agent per domain + shared instruction, prompt, and skill.
+ * Detects multiple domains (frontend/backend/AI) and generates:
+ *   - One agent per domain (named after primary tech, e.g. reactjs, fastapi)
+ *   - Per-domain instruction aligned to each agent
+ *   - Per-domain skill aligned to each agent
+ *   - Shared prompt routing to all agents
+ *   - copilot-instructions.md — always generated (project-level)
+ *
+ * When Copilot CLI is available, uses AI to derive project name and agent names.
+ * Falls back to heuristic naming (business domain + primary framework) when CLI is absent.
  */
 export async function generateUseCaseStatic(
   targetDir: string,
   description: string,
+  options?: { model?: string },
 ): Promise<{ slug: string; files: string[] }> {
-  const slug = deriveProjectName(description);
   const domains = decomposeDomains(description);
+
+  // Resolve naming: AI-powered (Copilot CLI) or heuristic fallback
+  const { slug, title: titleCase, resolvedDomains } = await resolveDomainNames(
+    targetDir, description, domains, options?.model,
+  );
+
   const githubDir = path.join(targetDir, ".github");
 
   // Create all output directories in parallel
-  await Promise.all([
+  const dirPromises: Promise<void>[] = [
     fs.ensureDir(path.join(githubDir, "agents")),
     fs.ensureDir(path.join(githubDir, "prompts")),
     fs.ensureDir(path.join(githubDir, "instructions")),
-    fs.ensureDir(path.join(githubDir, "skills", slug)),
-  ]);
+  ];
+  for (const rd of resolvedDomains) {
+    dirPromises.push(fs.ensureDir(path.join(githubDir, "skills", rd.agentName)));
+  }
+  await Promise.all(dirPromises);
 
-  const titleCase = slugToTitle(slug);
   const files: string[] = [];
+  const writePromises: Promise<void>[] = [];
 
-  // Generate one agent per detected domain (in parallel)
-  await Promise.all(
-    domains.map(async (domain) => {
-      const agentSlug = domains.length > 1 ? `${slug}-${domain.slug}` : slug;
-      await fs.writeFile(
-        path.join(githubDir, "agents", `${agentSlug}.agent.md`),
-        generateAgentContent(agentSlug, domain.title, description, domain),
-      );
-      files.push(`agents/${agentSlug}.agent.md`);
-    }),
-  );
+  // Generate one agent per detected domain (named after primary tech)
+  for (const rd of resolvedDomains) {
+    writePromises.push(
+      fs.writeFile(
+        path.join(githubDir, "agents", `${rd.agentName}.agent.md`),
+        generateAgentContent(rd.agentName, rd.agentTitle, description, rd),
+      ),
+    );
+    files.push(`agents/${rd.agentName}.agent.md`);
+  }
 
-  // Generate shared prompt, instruction, and skill in parallel
-  await Promise.all([
+  // Generate shared prompt (routes to all agents)
+  writePromises.push(
     fs.writeFile(
       path.join(githubDir, "prompts", `${slug}.prompt.md`),
-      generatePromptContent(slug, titleCase, description, domains),
+      generatePromptContent(slug, titleCase, description, resolvedDomains),
     ),
-    fs.writeFile(
-      path.join(githubDir, "instructions", `${slug}.instructions.md`),
-      generateInstructionContent(slug, titleCase, description, domains),
-    ),
-    fs.writeFile(
-      path.join(githubDir, "skills", slug, "SKILL.md"),
-      generateSkillContent(slug, titleCase, description, domains),
-    ),
-  ]);
+  );
   files.push(`prompts/${slug}.prompt.md`);
-  files.push(`instructions/${slug}.instructions.md`);
-  files.push(`skills/${slug}/SKILL.md`);
 
+  // Generate copilot-instructions.md (project-level, always)
+  writePromises.push(
+    fs.writeFile(
+      path.join(githubDir, "copilot-instructions.md"),
+      generateCopilotInstructionsContent(slug, titleCase, description, resolvedDomains),
+    ),
+  );
+  files.push("copilot-instructions.md");
+
+  // Per-domain instructions — each aligned to its agent
+  for (const rd of resolvedDomains) {
+    writePromises.push(
+      fs.writeFile(
+        path.join(githubDir, "instructions", `${rd.agentName}.instructions.md`),
+        generateInstructionContent(rd.agentName, rd.agentTitle, description, [rd]),
+      ),
+    );
+    files.push(`instructions/${rd.agentName}.instructions.md`);
+  }
+
+  // Per-domain skills — each aligned to its agent
+  for (const rd of resolvedDomains) {
+    writePromises.push(
+      fs.writeFile(
+        path.join(githubDir, "skills", rd.agentName, "SKILL.md"),
+        generateSkillContent(rd.agentName, rd.agentTitle, description, [rd]),
+      ),
+    );
+    files.push(`skills/${rd.agentName}/SKILL.md`);
+  }
+
+  await Promise.all(writePromises);
   return { slug, files };
 }
 
@@ -730,11 +918,16 @@ function generatePromptContent(
   slug: string,
   title: string,
   description: string,
-  domains: Domain[],
+  domains: ResolvedDomain[] | Domain[],
 ): string {
-  const agentRefs = domains.length > 1
-    ? domains.map((d) => `- **@${d.title}** — ${d.category} tasks (${d.techStack.join(", ") || d.category})`).join("\n")
-    : `Use the **@${title}** agent for all tasks.`;
+  const effectiveDomains = domains.map((d) => ({
+    ...d,
+    agentName: "agentName" in d ? (d as ResolvedDomain).agentName : slug,
+    agentTitle: "agentTitle" in d ? (d as ResolvedDomain).agentTitle : d.title,
+  }));
+  const agentRefs = effectiveDomains.length > 1
+    ? effectiveDomains.map((d) => `- **@${d.agentTitle}** — ${d.category} tasks (${d.techStack.join(", ") || d.category})`).join("\n")
+    : `Use the **@${effectiveDomains[0].agentTitle}** agent for all tasks.`;
 
   return `---
 # Generated by AGENT-FORGE
@@ -890,6 +1083,86 @@ scaffolding new features, debugging integration issues, or reviewing code qualit
 `;
 }
 
+/**
+ * Generate the project-level copilot-instructions.md.
+ * This file is loaded by Copilot for EVERY interaction.
+ * Contains a brief overview, tech stack, architecture, and agent references.
+ */
+function generateCopilotInstructionsContent(
+  slug: string,
+  title: string,
+  description: string,
+  domains: ResolvedDomain[] | Domain[],
+): string {
+  const effectiveDomains = domains.map((d) => ({
+    ...d,
+    agentName: "agentName" in d ? (d as ResolvedDomain).agentName : slug,
+    agentTitle: "agentTitle" in d ? (d as ResolvedDomain).agentTitle : d.title,
+  }));
+  const allTech = domains.flatMap((d) => d.techStack).filter(Boolean);
+  const techSummary = allTech.length > 0
+    ? `Tech stack: ${[...new Set(allTech)].join(", ")}.`
+    : "";
+
+  const agentSection = effectiveDomains
+    .map((d) => {
+      const tech = d.techStack.length > 0 ? ` (${d.techStack.join(", ")})` : "";
+      return `- **@${d.agentTitle}**${tech} — see \`agents/${d.agentName}.agent.md\`, \`instructions/${d.agentName}.instructions.md\`, \`skills/${d.agentName}/SKILL.md\``;
+    })
+    .join("\n");
+
+  const architectureLines: string[] = [];
+  for (const domain of domains) {
+    switch (domain.category) {
+      case "frontend":
+        architectureLines.push(`- **Frontend**: Component-based UI with utility-first CSS. File pattern: \`${domain.applyToGlob}\``);
+        break;
+      case "backend":
+        architectureLines.push(`- **Backend**: Controller → Service → Repository layered architecture. File pattern: \`${domain.applyToGlob}\``);
+        break;
+      case "ai":
+        architectureLines.push(`- **AI/ML**: LLM chains, prompt templates, and RAG pipelines. File pattern: \`${domain.applyToGlob}\``);
+        break;
+      default:
+        architectureLines.push(`- **General**: Follow existing project conventions`);
+    }
+  }
+
+  return `---
+# Generated by AGENT-FORGE
+# This file is loaded by GitHub Copilot for EVERY interaction in this workspace.
+# Keep it concise — detailed rules belong in per-agent instructions and skills.
+---
+
+# ${title}
+
+${description}
+
+${techSummary}
+
+## Architecture
+
+${architectureLines.join("\n")}
+
+## Agents
+
+${agentSection}
+
+## Key Conventions
+
+- Never hardcode secrets or credentials — use environment variables
+- All external input must be validated at API boundaries
+- Follow the existing code style and patterns in each layer
+- When uncertain which agent to use, check the prompt: \`prompts/${slug}.prompt.md\`
+
+## What NOT to Do
+
+- Do not mix concerns across layers (e.g., UI logic in backend, DB queries in controllers)
+- Do not bypass input validation or error handling
+- Do not introduce new patterns without checking existing conventions first
+`;
+}
+
 function generateReadmeContent(
   slug: string,
   title: string,
@@ -938,14 +1211,162 @@ Or use the slash command:
 
 // --- Utilities ---
 
+/** Domain augmented with resolved agent naming */
+export interface ResolvedDomain extends Domain {
+  agentName: string;
+  agentTitle: string;
+}
+
+/**
+ * Derive an agent file name from the domain's detected tech stack.
+ * Matches the AI planner's naming style: use primary framework name.
+ * Fallback: generic layer name (frontend, backend, ai).
+ */
+function deriveDomainAgentName(domain: Domain): string {
+  const FRAMEWORK_PRIORITY: Record<string, string> = {
+    // Frontend
+    "react": "reactjs", "reactjs": "reactjs",
+    "next.js": "nextjs", "nextjs": "nextjs",
+    "vue": "vue", "vuejs": "vue",
+    "angular": "angular",
+    "svelte": "svelte",
+    "nuxt": "nuxt",
+    "remix": "remix",
+    "astro": "astro",
+    // Backend
+    "fastapi": "fastapi",
+    "express": "express",
+    "nestjs": "nestjs", "nest.js": "nestjs",
+    "django": "django",
+    "flask": "flask",
+    "rails": "rails",
+    "spring": "spring", "springboot": "spring",
+    "laravel": "laravel",
+    ".net": "dotnet", "dotnet": "dotnet",
+    "gin": "gin",
+    "fiber": "fiber",
+    "koa": "koa",
+    "hapi": "hapi",
+    "fastify": "fastify",
+    // AI
+    "langchain": "langchain",
+    "langgraph": "langgraph", "lang-graph": "langgraph",
+    "crewai": "crewai", "crew.ai": "crewai",
+    "autogen": "autogen",
+    "semantic-kernel": "semantic-kernel",
+  };
+
+  for (const tech of domain.techStack) {
+    const normalized = tech.toLowerCase();
+    if (FRAMEWORK_PRIORITY[normalized]) {
+      return FRAMEWORK_PRIORITY[normalized];
+    }
+  }
+
+  // Fallback to generic layer name
+  return domain.slug; // "frontend", "backend", "ai", "general"
+}
+
+/**
+ * Resolve domain agent names using AI (Copilot CLI) when available,
+ * falling back to heuristic framework-based naming.
+ */
+async function resolveDomainNames(
+  targetDir: string,
+  description: string,
+  domains: Domain[],
+  model?: string,
+): Promise<{ slug: string; title: string; resolvedDomains: ResolvedDomain[] }> {
+  // Try AI-powered naming first
+  const { resolveNamingWithAI } = await import("./copilot-cli.js");
+  const aiNaming = await resolveNamingWithAI(targetDir, description, model);
+
+  if (aiNaming && aiNaming.slug && aiNaming.agents?.length > 0) {
+    // Build a lookup from AI agent categories to names
+    const aiAgentMap = new Map<string, { name: string; title: string }>();
+    for (const agent of aiNaming.agents) {
+      aiAgentMap.set(agent.category, { name: agent.name, title: agent.title });
+    }
+
+    const resolvedDomains = domains.map((domain) => {
+      const aiAgent = aiAgentMap.get(domain.category);
+      return {
+        ...domain,
+        agentName: aiAgent?.name ?? deriveDomainAgentName(domain),
+        agentTitle: aiAgent?.title ?? domain.title,
+      };
+    });
+
+    return {
+      slug: aiNaming.slug,
+      title: aiNaming.title,
+      resolvedDomains,
+    };
+  }
+
+  // Heuristic fallback: business domain slug + tech-based agent names
+  const slug = deriveProjectName(description);
+  const resolvedDomains = domains.map((domain) => ({
+    ...domain,
+    agentName: deriveDomainAgentName(domain),
+    agentTitle: domain.title,
+  }));
+
+  return {
+    slug,
+    title: slugToTitle(slug),
+    resolvedDomains,
+  };
+}
+
 const STOP_WORDS = new Set([
   "a", "an", "the", "and", "or", "but", "with", "using", "for", "of", "to", "in",
   "on", "at", "by", "from", "as", "is", "it", "its", "that", "this",
   "be", "are", "was", "were", "been", "being", "have", "has", "had",
   "do", "does", "did", "will", "would", "shall", "should", "may",
   "can", "could", "might", "must", "need", "also", "just", "very",
-  "application", "app", "project", "based",
+  "application", "app", "project", "based", "platform", "system",
+  // Architecture layer terms — these describe *how*, not *what*
+  "backend", "frontend", "front", "end", "back", "server", "client",
+  // Generic tech/language terms that add noise to slugs
+  "net", "python", "java", "ruby", "php", "go", "rust",
+  // Generic AI/ML terms — specific tools (langchain, openai) stay
+  "ai", "ml", "llm", "llms", "gpt", "multiagent",
+  // Filler verbs/prepositions common in descriptions
+  "connect", "drive", "driven", "supported", "suppported", "wil",
+  "build", "create", "make", "manage", "run", "running", "use",
+  "implement", "service", "services",
+  "framework", "workflow", "library", "tool", "tools",
 ]);
+
+/**
+ * Business domain terms — prioritized in slug generation.
+ * These describe *what* the project does, not *how* it's built.
+ */
+const BUSINESS_DOMAIN_PATTERNS: Array<{ pattern: RegExp; term: string }> = [
+  { pattern: /\be[- ]?commerce\b/i, term: "ecommerce" },
+  { pattern: /\bonline[- ]?shop(?:ping)?\b/i, term: "ecommerce" },
+  { pattern: /\bmarketplace\b/i, term: "marketplace" },
+  { pattern: /\bhealthcare\b/i, term: "healthcare" },
+  { pattern: /\bfintech\b/i, term: "fintech" },
+  { pattern: /\bblog(?:ging)?\b/i, term: "blog" },
+  { pattern: /\bcms\b/i, term: "cms" },
+  { pattern: /\bchat(?:bot)?\b/i, term: "chat" },
+  { pattern: /\bdashboard\b/i, term: "dashboard" },
+  { pattern: /\banalytics\b/i, term: "analytics" },
+  { pattern: /\binventory\b/i, term: "inventory" },
+  { pattern: /\bcrm\b/i, term: "crm" },
+  { pattern: /\berp\b/i, term: "erp" },
+  { pattern: /\bsaas\b/i, term: "saas" },
+  { pattern: /\bsocial[- ]?media\b/i, term: "social" },
+  { pattern: /\biot\b/i, term: "iot" },
+  { pattern: /\bedtech\b/i, term: "edtech" },
+  { pattern: /\bpayment\b/i, term: "payment" },
+  { pattern: /\bbooking\b/i, term: "booking" },
+  { pattern: /\bscheduling\b/i, term: "scheduling" },
+  { pattern: /\btask[- ]?manag/i, term: "taskmanager" },
+  { pattern: /\bportfolio\b/i, term: "portfolio" },
+];
 
 function toKebabCase(str: string): string {
   return str
@@ -959,20 +1380,40 @@ function toKebabCase(str: string): string {
 
 /**
  * Derive a short, meaningful project name from a verbose description.
- * Strips stop words and filler, extracts tech/domain terms.
+ * Prioritizes business domain terms (e-commerce, dashboard, etc.) over
+ * generic architecture/tech terms. Strips stop words and filler.
+ *
+ * Strategy:
+ *   1. Extract business domain terms first (e-commerce → "ecommerce")
+ *   2. Extract key tech differentiators (fastapi, langchain, react)
+ *   3. Combine: domain terms first, then up to 2-3 tech terms
+ *   4. Max 4 terms total for a short, readable slug
  */
 export function deriveProjectName(description: string): string {
-  // Normalize "full stack" / "fullstack" into one token
+  // Step 1: Extract business domain terms
+  const domainTerms: string[] = [];
+  const seenDomains = new Set<string>();
+  for (const { pattern, term } of BUSINESS_DOMAIN_PATTERNS) {
+    if (pattern.test(description) && !seenDomains.has(term)) {
+      seenDomains.add(term);
+      domainTerms.push(term);
+    }
+  }
+
+  // Step 2: Normalize and extract remaining meaningful words
   let normalized = description.toLowerCase().replace(/full[- ]?stack/gi, "fullstack");
+  // Normalize compound terms before splitting
+  normalized = normalized.replace(/e[- ]commerce/gi, "ecommerce");
+  normalized = normalized.replace(/multi[- ]agent(?:ic)?/gi, "multiagent");
 
   const words = normalized
     .replace(/[^a-z0-9\s-]/g, "")
     .split(/[\s-]+/)
     .filter((w) => w.length > 0 && !STOP_WORDS.has(w));
 
-  // Deduplicate and normalize while preserving order
-  const seen = new Set<string>();
-  const unique: string[] = [];
+  // Deduplicate and normalize aliases
+  const seen = new Set<string>(seenDomains); // skip already-captured domain terms
+  const techTerms: string[] = [];
   for (const word of words) {
     const key = word
       .replace(/^reactjs$/, "react")
@@ -982,12 +1423,16 @@ export function deriveProjectName(description: string): string {
       .replace(/^nextjs$/, "next");
     if (!seen.has(key)) {
       seen.add(key);
-      unique.push(key);
+      techTerms.push(key);
     }
   }
 
-  // Keep max 5 terms for a short but meaningful name
-  const slug = unique.slice(0, 5).join("-").replace(/-$/, "");
+  // Step 3: Combine — domain terms first, then fill with tech terms
+  const maxTerms = 3;
+  const maxTech = Math.max(1, maxTerms - domainTerms.length);
+  const combined = [...domainTerms, ...techTerms.slice(0, maxTech)];
+
+  const slug = combined.join("-").replace(/-$/, "");
   return slug || toKebabCase(description);
 }
 

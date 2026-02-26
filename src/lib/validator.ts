@@ -7,6 +7,147 @@ import type {
   ArtifactType,
 } from "../types.js";
 
+// ─── Post-generation auto-fix ───
+
+/**
+ * Post-generation validation and auto-fix.
+ * Reads all generated artifacts, fixes common issues (missing description,
+ * unrecognized fields), then validates to ensure zero warnings/errors.
+ *
+ * Returns the final validation report after fixes are applied.
+ */
+export async function postGenerationValidateAndFix(
+  targetDir: string,
+): Promise<ValidationReport> {
+  const githubDir = path.join(targetDir, ".github");
+  if (!(await fs.pathExists(githubDir))) {
+    return { errors: [], warnings: [], passed: [], summary: "No .github/ directory found" };
+  }
+
+  // Phase 1: Auto-fix all markdown artifacts
+  const artifactDirs: Array<{ dir: string; suffix: string; type: ArtifactType }> = [
+    { dir: path.join(githubDir, "agents"), suffix: ".agent.md", type: "agent" },
+    { dir: path.join(githubDir, "prompts"), suffix: ".prompt.md", type: "prompt" },
+    { dir: path.join(githubDir, "instructions"), suffix: ".instructions.md", type: "instruction" },
+  ];
+
+  for (const { dir, suffix, type } of artifactDirs) {
+    if (await fs.pathExists(dir)) {
+      const files = await fs.readdir(dir);
+      for (const file of files) {
+        if (file.endsWith(suffix)) {
+          await autoFixFile(path.join(dir, file), type);
+        }
+      }
+    }
+  }
+
+  // Fix skills (nested in subdirectories)
+  const skillsDir = path.join(githubDir, "skills");
+  if (await fs.pathExists(skillsDir)) {
+    const entries = await fs.readdir(skillsDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        const skillFile = path.join(skillsDir, entry.name, "SKILL.md");
+        if (await fs.pathExists(skillFile)) {
+          await autoFixFile(skillFile, "skill");
+        }
+      }
+    }
+  }
+
+  // Phase 2: Validate after fixes
+  return validateDirectory(targetDir);
+}
+
+/**
+ * Auto-fix a single artifact file's frontmatter.
+ * Fixes:
+ *   - Missing `description` — derives from body content or file name
+ *   - Unrecognized fields — removes them (prevents VS Code warnings)
+ *   - Missing `applyTo` for instructions — infers from file name/content
+ *   - `user-invocable` as string — converts to boolean
+ */
+async function autoFixFile(
+  filePath: string,
+  type: ArtifactType,
+): Promise<void> {
+  const content = await fs.readFile(filePath, "utf-8");
+  const { frontmatter, body } = parseFrontmatter(content);
+
+  if (!frontmatter) return;
+
+  const validFields = VALID_FIELDS[type];
+  if (!validFields) return;
+
+  let modified = false;
+
+  // Fix: Remove unrecognized fields
+  for (const key of Object.keys(frontmatter)) {
+    if (!validFields.has(key)) {
+      delete frontmatter[key];
+      modified = true;
+    }
+  }
+
+  // Fix: Missing description
+  if (!frontmatter.description) {
+    const name = frontmatter.name as string | undefined;
+    const fileName = path.basename(filePath).replace(/\.(agent|prompt|instructions)\.md$/, "").replace(/^SKILL$/, "");
+    const firstHeading = body.match(/^#\s+(.+)$/m)?.[1];
+
+    let desc: string;
+    if (type === "agent") {
+      desc = name ? `${name} development agent` : `${autoFixSlugToTitle(fileName)} agent`;
+    } else if (type === "instruction") {
+      desc = `Coding standards for ${name || autoFixSlugToTitle(fileName)} — auto-applied to matching files`;
+    } else if (type === "prompt") {
+      desc = firstHeading || `${autoFixSlugToTitle(fileName)} prompt`;
+    } else {
+      desc = firstHeading || `${autoFixSlugToTitle(fileName)} domain knowledge`;
+    }
+
+    frontmatter.description = desc;
+    modified = true;
+  }
+
+  // Fix: Instruction missing applyTo
+  if (type === "instruction" && !frontmatter.applyTo) {
+    const name = (frontmatter.name as string || path.basename(filePath, ".instructions.md")).toLowerCase();
+    if (/react|frontend|next|vue|angular|svelte|tailwind|css/i.test(name)) {
+      frontmatter.applyTo = "**/*.{ts,tsx,js,jsx,css,scss}";
+    } else if (/python|fastapi|django|flask|langchain/i.test(name)) {
+      frontmatter.applyTo = "**/*.py";
+    } else if (/dotnet|\.net|csharp/i.test(name)) {
+      frontmatter.applyTo = "**/*.{cs,csproj}";
+    } else if (/backend|express|node|api/i.test(name)) {
+      frontmatter.applyTo = "**/*.{ts,js,py}";
+    } else {
+      frontmatter.applyTo = "**/*";
+    }
+    modified = true;
+  }
+
+  // Fix: user-invocable as string → boolean
+  if (type === "agent" && typeof frontmatter["user-invocable"] === "string") {
+    frontmatter["user-invocable"] = frontmatter["user-invocable"] === "true";
+    modified = true;
+  }
+
+  if (modified) {
+    const yamlStr = YAML.stringify(frontmatter, { lineWidth: 0 }).trim();
+    const newContent = `---\n${yamlStr}\n---\n${body}`;
+    await fs.writeFile(filePath, newContent);
+  }
+}
+
+function autoFixSlugToTitle(slug: string): string {
+  return slug
+    .split(/[-_]/)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
 /** Valid frontmatter fields per artifact type (markdown-based types only) */
 const VALID_FIELDS: Partial<Record<ArtifactType, Set<string>>> = {
   agent: new Set([

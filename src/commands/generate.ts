@@ -4,6 +4,8 @@ import {
   prepareGenerationWorkspace,
   installGeneratedArtifacts,
   cleanupGenerationWorkspace,
+  readPlanFile,
+  prepareWorkspaceForPlan,
   generateUseCaseStatic,
   generateHooksStatic,
   generateMcpConfigStatic,
@@ -12,10 +14,13 @@ import {
 import {
   isCopilotCliInstalled,
   launchCopilotCli,
-  buildOrchestrationPrompt,
+  buildPlanningPrompt,
+  buildOrchestrationPromptFromPlan,
   selectModel,
 } from "../lib/copilot-cli.js";
 import { LOGO } from "./init.js";
+import { postGenerationValidateAndFix } from "../lib/validator.js";
+import path from "path";
 import type { GenerateOptions } from "../types.js";
 
 export async function generateCommand(
@@ -50,7 +55,7 @@ export async function generateCommand(
       switch (mode) {
         case "discovery":
         case "full": {
-          const { files } = await generateUseCaseStatic(targetDir, description);
+          const { files } = await generateUseCaseStatic(targetDir, description, { model: options.model });
           allFiles.push(...files);
           break;
         }
@@ -72,7 +77,7 @@ export async function generateCommand(
         case "on-demand": {
           const types = options.types ?? ["agent", "instruction", "prompt", "skill"];
           if (types.some((t) => ["agent", "instruction", "prompt", "skill"].includes(t))) {
-            const { files } = await generateUseCaseStatic(targetDir, description);
+            const { files } = await generateUseCaseStatic(targetDir, description, { model: options.model });
             allFiles.push(...files);
           }
           if (types.includes("hook")) {
@@ -93,6 +98,18 @@ export async function generateCommand(
 
       spinner.succeed("Generated!");
 
+      // Auto-fix and validate before showing results
+      const fixSpinner = ora("Validating & fixing artifacts...").start();
+      const report = await postGenerationValidateAndFix(targetDir);
+      if (report.errors.length === 0) {
+        fixSpinner.succeed(`Validated — ${report.passed.length} files passed${report.warnings.length > 0 ? `, ${report.warnings.length} warning(s)` : ""}`);
+      } else {
+        fixSpinner.warn(`${report.errors.length} error(s) remain after auto-fix`);
+        for (const err of report.errors) {
+          console.log(chalk.red(`    ✗ ${path.basename(err.file)}: ${err.message}`));
+        }
+      }
+
       const { deriveProjectName } = await import("../lib/scaffold.js");
       printGeneratedFiles(deriveProjectName(description), allFiles);
 
@@ -110,9 +127,9 @@ export async function generateCommand(
     return;
   }
 
-  // Copilot CLI multi-agent generation
+  // Copilot CLI multi-agent generation (plan-then-execute pipeline)
   if (!options.model) {
-    console.log(chalk.dim("  Copilot CLI detected — using multi-agent orchestration."));
+    console.log(chalk.dim("  Copilot CLI detected — using plan-then-execute pipeline."));
     console.log();
   }
 
@@ -124,32 +141,65 @@ export async function generateCommand(
     const { tempDir, slug, title, domains } = await prepareGenerationWorkspace(description, mode);
     spinner.succeed("Workspace ready");
 
+    // Phase 1: Planning
     console.log();
-    console.log(chalk.bold("  Launching AGENT-FORGE Orchestrator..."));
+    console.log(chalk.bold("  Phase 1: Planning..."));
     console.log(chalk.dim(`  Model: ${model}`));
     console.log(chalk.dim(`  Mode: ${mode}`));
     if (domains.length > 1) {
       console.log(chalk.dim(`  Domains: ${domains.map((d) => d.title).join(", ")}`));
     }
+    console.log();
+
+    const planPrompt = buildPlanningPrompt(mode, slug, title, description, domains, undefined, options.types);
+    const planExitCode = await launchCopilotCli(tempDir, planPrompt, { model, agent: "forge-planner" });
+
+    if (planExitCode !== 0) {
+      console.log(chalk.yellow("\n  ⚠  Planner exited with warnings."));
+    }
+
+    // Read the plan
+    const planSpinner = ora("Reading plan...").start();
+    const plan = await readPlanFile(tempDir);
+    planSpinner.succeed(`Plan ready — ${plan.agents.length} agent(s): ${plan.agents.map((a) => a.name).join(", ")}`);
+
+    // Prepare workspace directories for Phase 2 (skill subdirs, etc.)
+    await prepareWorkspaceForPlan(tempDir, plan);
+
+    // Phase 2: Orchestrated generation from plan
+    console.log();
+    console.log(chalk.bold("  Phase 2: Generating artifacts..."));
     console.log(chalk.dim("  Multi-agent orchestration — parallel sub-agent execution"));
     console.log();
 
-    const prompt = buildOrchestrationPrompt(mode, slug, title, description, domains, options.types);
-    const exitCode = await launchCopilotCli(tempDir, prompt, { model });
+    const orchPrompt = buildOrchestrationPromptFromPlan(plan, mode);
+    const exitCode = await launchCopilotCli(tempDir, orchPrompt, { model, agent: "forge-orchestrator" });
 
     // Copy generated artifacts
-    const installed = await installGeneratedArtifacts(tempDir, targetDir, slug);
+    const installed = await installGeneratedArtifacts(tempDir, targetDir, plan.slug);
     // Fire-and-forget cleanup
     cleanupGenerationWorkspace(tempDir).catch(() => {});
+
+    // Phase 3: Auto-fix and validate AI-generated artifacts
+    const fixSpinner = ora("Validating & fixing artifacts...").start();
+    const report = await postGenerationValidateAndFix(targetDir);
+    if (report.errors.length === 0) {
+      fixSpinner.succeed(`Validated — ${report.passed.length} files passed${report.warnings.length > 0 ? `, ${report.warnings.length} warning(s)` : ""}`);
+    } else {
+      fixSpinner.warn(`${report.errors.length} error(s) remain after auto-fix`);
+      for (const err of report.errors) {
+        console.log(chalk.red(`    ✗ ${path.basename(err.file)}: ${err.message}`));
+      }
+    }
 
     if (exitCode === 0) {
       console.log();
       console.log(chalk.green.bold("✓ Generated!"));
-      printGeneratedFiles(slug, installed);
+      printGeneratedFiles(plan.slug, installed);
       console.log();
       console.log(chalk.bold("  Next steps:"));
       console.log(`    1. Open Copilot Chat: ${chalk.dim("⌘⇧I / Ctrl+Shift+I")}`);
-      console.log(`    2. Try: ${chalk.cyan(`@${title}`)}`);
+      console.log(`    2. Try: ${chalk.cyan(`@${plan.title}`)}`);
       console.log();
     } else {
       console.log();
