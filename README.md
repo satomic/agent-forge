@@ -339,8 +339,8 @@ src/
 │   ├── merger.ts         # Smart merge for existing .github/
 │   ├── detector.ts       # Workspace tech stack detection
 │   └── validator.ts      # YAML schema validation
+├── cli/               # Multi-agent orchestration templates (9 writer agents)
 ├── templates/
-│   ├── cli/              # Multi-agent orchestration templates (9 writer agents)
 │   └── gallery/          # Pre-built use case templates (11 use cases)
 └── types.ts              # Shared TypeScript types
 ```

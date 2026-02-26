@@ -10,10 +10,6 @@ import {
   cleanupGenerationWorkspace,
   readPlanFile,
   prepareWorkspaceForPlan,
-  generateUseCaseStatic,
-  generateHooksStatic,
-  generateMcpConfigStatic,
-  generateWorkflowStatic,
   deriveProjectName,
 } from "../lib/scaffold.js";
 import { getGallery } from "../lib/gallery.js";
@@ -21,34 +17,112 @@ import { detectWorkspace } from "../lib/detector.js";
 import {
   isCopilotCliInstalled,
   launchCopilotCli,
+  launchCopilotCliParallel,
+  selectModel,
+  WRITER_LABELS,
+  formatDuration,
+} from "../lib/copilot-cli.js";
+import {
   buildPlanningPrompt,
   buildOrchestrationPromptFromPlan,
-  selectModel,
-} from "../lib/copilot-cli.js";
+  buildWriterPrompts,
+  buildCopilotInstructionsPrompt,
+} from "../lib/prompt-builder.js";
 import { postGenerationValidateAndFix } from "../lib/validator.js";
-import type { InitOptions, InitMode, GenerationMode, ArtifactType, WorkspaceInfo } from "../types.js";
+import type { InitOptions, InitMode, GenerationMode, ArtifactType, SpeedStrategy, WorkspaceInfo } from "../types.js";
 
-export const LOGO = `
-${chalk.hex("#FF8C00")("   █████╗  ██████╗ ███████╗███╗   ██╗████████╗")}
-${chalk.hex("#FF7B00")("  ██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝")}
-${chalk.hex("#FF6A00")("  ███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║   ")}
-${chalk.hex("#FF5900")("  ██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║   ")}
-${chalk.hex("#FF4800")("  ██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║   ")}
-${chalk.hex("#FF3700")("  ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝   ")}
-${chalk.hex("#FF6B00")("  ███████╗ ██████╗  ██████╗  ██████╗ ███████╗")}
-${chalk.hex("#FF5500")("  ██╔════╝██╔═══██╗██╔══██╗██╔════╝ ██╔════╝")}
-${chalk.hex("#FF4400")("  █████╗  ██║   ██║██████╔╝██║  ███╗█████╗  ")}
-${chalk.hex("#FF3300")("  ██╔══╝  ██║   ██║██╔══██╗██║   ██║██╔══╝  ")}
-${chalk.hex("#FF2200")("  ██║     ╚██████╔╝██║  ██║╚██████╔╝███████╗")}
-${chalk.hex("#FF1100")("  ╚═╝      ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝")}
-${chalk.dim("  Context Engineering Toolkit for GitHub Copilot")}
-`;
+// ── Side-by-side AGENT-FORGE block art (6 rows) ───────────────────────
+const BANNER_ROWS = [
+  "   █████╗  ██████╗ ███████╗███╗   ██╗████████╗    ███████╗ ██████╗  ██████╗  ██████╗ ███████╗",
+  "  ██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝    ██╔════╝██╔═══██╗██╔══██╗██╔════╝ ██╔════╝",
+  "  ███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║       █████╗  ██║   ██║██████╔╝██║  ███╗█████╗  ",
+  "  ██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║       ██╔══╝  ██║   ██║██╔══██╗██║   ██║██╔══╝  ",
+  "  ██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║       ██║     ╚██████╔╝██║  ██║╚██████╔╝███████╗",
+  "  ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝       ╚═╝      ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝",
+];
+const BANNER_COLORS = ["#FF8C00", "#FF7B00", "#FF6A00", "#FF5900", "#FF4800", "#FF3700"];
+const TAGLINE = "  AI-Native Context Kit for GitHub Copilot-Driven Development";
+
+/** Static logo for non-TTY / piped output */
+export const LOGO = "\n" + BANNER_ROWS.map((r, i) => chalk.hex(BANNER_COLORS[i])(r)).join("\n") + "\n" + chalk.dim(TAGLINE) + "\n\n";
+
+/** Pixel-reveal animation — characters appear at random positions until the banner materializes */
+export async function animateLogo(): Promise<void> {
+  // Fallback: if not a TTY, just print static
+  if (!process.stdout.isTTY) {
+    console.log(LOGO);
+    return;
+  }
+
+  const rows = BANNER_ROWS.length;
+  const cols = Math.max(...BANNER_ROWS.map((r) => r.length));
+  const clearEol = "\x1b[K";
+  const hideCursor = "\x1b[?25l";
+  const showCursor = "\x1b[?25h";
+
+  // Build 2D grid starting as all spaces
+  const grid: string[][] = Array.from({ length: rows }, () => Array(cols).fill(" "));
+
+  // Collect positions of non-space characters to animate
+  const positions: { r: number; c: number }[] = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < BANNER_ROWS[r].length; c++) {
+      if (BANNER_ROWS[r][c] !== " ") {
+        positions.push({ r, c });
+      }
+    }
+  }
+
+  // Fisher-Yates shuffle
+  for (let i = positions.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [positions[i], positions[j]] = [positions[j], positions[i]];
+  }
+
+  // Reserve vertical space (top margin + banner rows + tagline + bottom margin)
+  const totalLines = rows + 3;
+  process.stdout.write(hideCursor + "\n".repeat(totalLines));
+
+  // Build a single frame string and write it atomically (no flicker)
+  const render = () => {
+    let frame = `\x1b[${totalLines}A`; // cursor up to top of reserved space
+    frame += clearEol + "\n"; // top margin
+    for (let r = 0; r < rows; r++) {
+      frame += chalk.hex(BANNER_COLORS[r])(grid[r].join("")) + clearEol + "\n";
+    }
+    frame += chalk.dim(TAGLINE) + clearEol + "\n";
+    frame += clearEol + "\n"; // bottom margin
+    process.stdout.write(frame);
+  };
+
+  // Reveal in ~15 steps over ~1 second
+  const steps = 15;
+  const batchSize = Math.ceil(positions.length / steps);
+  const frameDelay = 65;
+
+  for (let i = 0; i < positions.length; i += batchSize) {
+    const batch = positions.slice(i, i + batchSize);
+    for (const { r, c } of batch) {
+      grid[r][c] = BANNER_ROWS[r][c];
+    }
+    render();
+    await new Promise((resolve) => setTimeout(resolve, frameDelay));
+  }
+
+  // Final complete render
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < BANNER_ROWS[r].length; c++) {
+      grid[r][c] = BANNER_ROWS[r][c];
+    }
+  }
+  render();
+  process.stdout.write(showCursor);
+}
 
 export async function initCommand(
   options: InitOptions,
 ): Promise<void> {
-  console.log(LOGO);
-  console.log();
+  await animateLogo();
 
   // 1. Mode selection
   const mode: InitMode = options.mode ?? await select({
@@ -98,7 +172,7 @@ async function handleNewProject(
     console.log(chalk.dim(`  Created ${folderName}/`));
   }
 
-  await runGeneration(targetDir, description, { ...options, generationMode, selectedTypes });
+  await runGeneration(targetDir, description, { ...options, generationMode, selectedTypes }, undefined, "greenfield");
 
   console.log();
   console.log(chalk.bold("  To get started:"));
@@ -204,7 +278,7 @@ async function handleExisting(
     description = description + techDesc;
   }
 
-  await runGeneration(targetDir, description, { ...options, generationMode, selectedTypes }, workspace);
+  await runGeneration(targetDir, description, { ...options, generationMode, selectedTypes }, workspace, "brownfield");
   printNextSteps();
 }
 
@@ -267,93 +341,50 @@ async function runGeneration(
   description: string,
   options: InitOptions,
   workspace?: WorkspaceInfo,
+  pipeline: "greenfield" | "brownfield" = "greenfield",
 ): Promise<void> {
   const mode = options.generationMode ?? "full";
 
+  // Copilot CLI is required
   if (!isCopilotCliInstalled()) {
-    const spinner = ora("Generating (static templates)...").start();
-    const allFiles: string[] = [];
-
-    // Static fallback dispatches based on mode
-    switch (mode) {
-      case "discovery":
-      case "full": {
-        const { files } = await generateUseCaseStatic(targetDir, description, { model: options.model });
-        allFiles.push(...files);
-        break;
-      }
-      case "hooks": {
-        const { files } = await generateHooksStatic(targetDir, description);
-        allFiles.push(...files);
-        break;
-      }
-      case "mcp-server": {
-        const { files } = await generateMcpConfigStatic(targetDir, description);
-        allFiles.push(...files);
-        break;
-      }
-      case "agentic-workflow": {
-        const { files } = await generateWorkflowStatic(targetDir, description);
-        allFiles.push(...files);
-        break;
-      }
-      case "on-demand": {
-        const types = options.selectedTypes ?? ["agent", "instruction", "prompt", "skill"];
-        if (types.some((t) => ["agent", "instruction", "prompt", "skill"].includes(t))) {
-          const { files } = await generateUseCaseStatic(targetDir, description, { model: options.model });
-          allFiles.push(...files);
-        }
-        if (types.includes("hook")) {
-          const { files } = await generateHooksStatic(targetDir, description);
-          allFiles.push(...files);
-        }
-        if (types.includes("mcp-server")) {
-          const { files } = await generateMcpConfigStatic(targetDir, description);
-          allFiles.push(...files);
-        }
-        if (types.includes("agentic-workflow")) {
-          const { files } = await generateWorkflowStatic(targetDir, description);
-          allFiles.push(...files);
-        }
-        break;
-      }
-    }
-
-    const slug = deriveProjectName(description);
-    spinner.succeed("Generated!");
-
-    // Auto-fix and validate
-    const fixSpinner = ora("Validating & fixing artifacts...").start();
-    const report = await postGenerationValidateAndFix(targetDir);
-    if (report.errors.length === 0) {
-      fixSpinner.succeed(`Validated — ${report.passed.length} files passed${report.warnings.length > 0 ? `, ${report.warnings.length} warning(s)` : ""}`);
-    } else {
-      fixSpinner.warn(`${report.errors.length} error(s) remain after auto-fix`);
-    }
-
-    printGeneratedFiles(slug, allFiles);
-    printNoCopilotWarning();
+    console.log(chalk.red("  ✗ GitHub Copilot CLI is required for generation."));
+    console.log();
+    console.log(chalk.bold("  Install Copilot CLI:"));
+    console.log(chalk.cyan("    npm install -g @github/copilot"));
+    console.log();
+    console.log(chalk.dim("  Then re-run: forge init"));
+    console.log();
+    console.log(chalk.dim("  Gallery mode works without Copilot CLI — run: forge init --mode gallery"));
     return;
   }
 
   const model = options.model ?? await selectModel();
 
   const spinner = ora("Preparing workspace...").start();
-  const { tempDir, slug, title, domains } = await prepareGenerationWorkspace(description, mode);
+  const { tempDir, slug, title, domains } = await prepareGenerationWorkspace(description, mode, pipeline);
   spinner.succeed("Workspace ready");
+
+  const pipelineLabel = pipeline === "brownfield" ? "brownfield" : "greenfield";
+  const plannerAgent = pipeline === "brownfield" ? "forge-brownfield-planner" : "forge-greenfield-planner";
+  const orchestratorAgent = pipeline === "brownfield" ? "forge-brownfield-orchestrator" : "forge-greenfield-orchestrator";
 
   // Phase 1: Planning
   console.log();
-  console.log(chalk.bold("  Phase 1: Planning..."));
-  console.log(chalk.dim(`  Model: ${model}`));
-  console.log(chalk.dim(`  Mode: ${mode}`));
+  console.log(chalk.hex("#FF8C00").bold(`  ── Phase 1: Planning (${pipelineLabel}) ` + "─".repeat(Math.max(0, 30 - pipelineLabel.length))));
+  console.log(chalk.dim(`  │ Model: ${model}`));
+  console.log(chalk.dim(`  │ Mode: ${mode}`));
   if (domains.length > 1) {
-    console.log(chalk.dim(`  Domains: ${domains.map((d) => d.title).join(", ")}`));
+    console.log(chalk.dim(`  │ Domains: ${domains.map((d) => d.title).join(", ")}`));
   }
   console.log();
 
   const planPrompt = buildPlanningPrompt(mode, slug, title, description, domains, workspace, options.selectedTypes);
-  const planExitCode = await launchCopilotCli(tempDir, planPrompt, { model, agent: "forge-planner" });
+  const planExitCode = await launchCopilotCli(tempDir, planPrompt, {
+    model,
+    agent: plannerAgent,
+    maxContinues: 15,
+    plan: true,
+  });
 
   if (planExitCode !== 0) {
     console.log(chalk.yellow("\n  ⚠  Planner exited with warnings."));
@@ -364,38 +395,107 @@ async function runGeneration(
   const plan = await readPlanFile(tempDir);
   planSpinner.succeed(`Plan ready — ${plan.agents.length} agent(s): ${plan.agents.map((a) => a.name).join(", ")}`);
 
-  // Prepare workspace directories for Phase 2 (skill subdirs, etc.)
+  // Prepare workspace directories for Phase 2
   await prepareWorkspaceForPlan(tempDir, plan);
 
-  // Phase 2: Orchestrated generation from plan
+  // Speed selection
+  const speed: SpeedStrategy = options.speed ?? await select<SpeedStrategy>({
+    message: "Generation speed:",
+    choices: [
+      { value: "standard" as SpeedStrategy, name: `Standard  ${chalk.dim(`— single session, ~2 PRU (slower)`)}` },
+      { value: "turbo" as SpeedStrategy, name: `Turbo     ${chalk.dim(`— parallel sessions, ~${plan.agents.length + 2} PRU (fastest)`)}` },
+    ],
+    default: "standard",
+  });
+
+  const totalPru = speed === "turbo" ? plan.agents.length + 2 : 2;
+
+  // Phase 2: Generate artifacts
   console.log();
-  console.log(chalk.bold("  Phase 2: Generating artifacts..."));
-  console.log(chalk.dim("  Multi-agent orchestration — parallel sub-agent execution"));
-  console.log();
+  const speedLabel = speed === "turbo" ? "⚡ Turbo" : "Standard";
+  console.log(chalk.hex("#FF8C00").bold(`  ── Phase 2: Generating (${speedLabel}) ` + "─".repeat(Math.max(0, 28 - speedLabel.length))));
 
-  const orchPrompt = buildOrchestrationPromptFromPlan(plan, mode);
-  const exitCode = await launchCopilotCli(tempDir, orchPrompt, { model, agent: "forge-orchestrator" });
+  let exitCode: number;
+  const phase2Start = Date.now();
 
-  const installed = await installGeneratedArtifacts(tempDir, targetDir, plan.slug);
-  // Fire-and-forget cleanup — don't block the success message
-  cleanupGenerationWorkspace(tempDir).catch(() => {});
+  if (speed === "turbo") {
+    // Turbo: spawn parallel Copilot CLI processes per writer agent
+    const writerTasks = buildWriterPrompts(plan, mode);
+    console.log(chalk.dim(`  │ ${writerTasks.length} parallel sessions → ~${writerTasks.length + 1} PRU`));
+    console.log();
 
-  // Phase 3: Auto-fix and validate AI-generated artifacts
-  const fixSpinner2 = ora("Validating & fixing artifacts...").start();
-  const report = await postGenerationValidateAndFix(targetDir);
-  if (report.errors.length === 0) {
-    fixSpinner2.succeed(`Validated — ${report.passed.length} files passed${report.warnings.length > 0 ? `, ${report.warnings.length} warning(s)` : ""}`);
+    // Show pending writers
+    for (const task of writerTasks) {
+      const label = WRITER_LABELS[task.agent] ?? task.agent;
+      console.log(chalk.dim(`    ◦ ${label}`));
+    }
+    console.log();
+
+    // Run in parallel with progress callback
+    const result = await launchCopilotCliParallel(tempDir, writerTasks, { model }, (wr) => {
+      const label = (WRITER_LABELS[wr.agent] ?? wr.agent).padEnd(22);
+      const duration = chalk.dim(formatDuration(wr.durationMs));
+      if (wr.exitCode === 0) {
+        console.log(`    ${chalk.green("✔")} ${label} ${duration}`);
+      } else {
+        console.log(`    ${chalk.red("✘")} ${label} ${duration}`);
+      }
+    });
+
+    // Create copilot-instructions.md after all writers complete
+    console.log();
+    const instrSpinner = ora("  Creating copilot-instructions.md...").start();
+    const instrPrompt = buildCopilotInstructionsPrompt(plan);
+    const instrCode = await launchCopilotCli(tempDir, instrPrompt, {
+      model,
+      agent: orchestratorAgent,
+      maxContinues: 5,
+      quiet: true,
+    });
+    if (instrCode === 0) {
+      instrSpinner.succeed("  copilot-instructions.md");
+    } else {
+      instrSpinner.warn("  copilot-instructions.md (with warnings)");
+    }
+
+    exitCode = result.failed > 0 ? 1 : 0;
   } else {
-    fixSpinner2.warn(`${report.errors.length} error(s) remain after auto-fix`);
+    // Standard: single orchestrator process with sequential sub-agent delegation
+    console.log(chalk.dim("  │ Single orchestrator session → ~2 PRU"));
+    console.log();
+
+    const orchPrompt = buildOrchestrationPromptFromPlan(plan, mode);
+    exitCode = await launchCopilotCli(tempDir, orchPrompt, { model, agent: orchestratorAgent });
   }
 
+  const phase2Duration = Date.now() - phase2Start;
+
+  const installed = await installGeneratedArtifacts(tempDir, targetDir, plan.slug);
+  cleanupGenerationWorkspace(tempDir).catch(() => {});
+
+  // Phase 3: Validation
+  console.log();
+  console.log(chalk.hex("#FF8C00").bold("  ── Phase 3: Validation ─────────────────────────"));
+  const fixSpinner2 = ora("  Checking artifacts...").start();
+  const report = await postGenerationValidateAndFix(targetDir);
+  if (report.errors.length === 0) {
+    fixSpinner2.succeed(`  ${report.passed.length} files passed${report.warnings.length > 0 ? `, ${report.warnings.length} warning(s)` : ""}`);
+  } else {
+    fixSpinner2.warn(`  ${report.errors.length} error(s) remain after auto-fix`);
+  }
+
+  // Results
+  console.log();
+  console.log(chalk.hex("#FF8C00").bold("  ── Results ─────────────────────────────────────"));
+
   if (exitCode === 0) {
+    const durationStr = formatDuration(phase2Duration);
     console.log();
-    console.log(chalk.green.bold("✓ Generated!"));
+    console.log(`  ${chalk.green.bold("✓")} Generated ${chalk.bold(String(installed.length))} files in ${chalk.bold(durationStr)} ${chalk.dim(`(~${totalPru} PRU)`)}`);
     printGeneratedFiles(plan.slug, installed);
   } else {
     console.log();
-    console.log(chalk.yellow("⚠  Generation finished with warnings. Review the generated files."));
+    console.log(chalk.yellow("  ⚠  Generation finished with warnings. Review the generated files."));
   }
 }
 
@@ -462,15 +562,5 @@ function printNextSteps(): void {
   console.log(chalk.bold("  Next steps:"));
   console.log(`    1. Open Copilot Chat: ${chalk.dim("⌘⇧I / Ctrl+Shift+I")}`);
   console.log(`    2. Try your new agent or prompt`);
-  console.log();
-}
-
-function printNoCopilotWarning(): void {
-  console.log();
-  console.log(chalk.yellow("  ⚠  GitHub Copilot CLI not found — used static templates."));
-  console.log(chalk.dim("    Install for AI-powered generation:"));
-  console.log(chalk.cyan("      npm install -g @github/copilot"));
-  console.log(chalk.dim("    Then re-run:"));
-  console.log(chalk.cyan("      forge init"));
   console.log();
 }

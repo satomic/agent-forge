@@ -12,7 +12,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsup && rm -rf dist/templates && cp -r src/templates dist/templates",
+    "build": "tsup && rm -rf dist/templates && cp -r src/templates dist/templates && rm -rf dist/cli && cp -r src/cli dist/cli",
     "dev": "tsup --watch",
     "start": "node dist/index.js",
     "lint": "tsc --noEmit",

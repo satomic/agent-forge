@@ -1,7 +1,7 @@
 import chalk from "chalk";
 import { execSync } from "child_process";
 import { getCopilotCliVersion } from "../lib/copilot-cli.js";
-import { LOGO } from "./init.js";
+import { animateLogo } from "./init.js";
 
 interface CheckResult {
   name: string;
@@ -11,8 +11,8 @@ interface CheckResult {
 }
 
 export async function checkCommand(): Promise<void> {
-  console.log(LOGO);
-  console.log(chalk.bold("\n  Checking prerequisites...\n"));
+  await animateLogo();
+  console.log(chalk.bold("  Checking prerequisites...\n"));
 
   const results: CheckResult[] = [];
 

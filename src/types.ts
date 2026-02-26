@@ -33,16 +33,17 @@ export type GenerationMode =
   | "agentic-workflow"
   | "discovery";
 
-/** Hook lifecycle events supported by VS Code */
+  
+/** Hook lifecycle events supported by Copilot CLI */
 export type HookEvent =
-  | "SessionStart"
-  | "UserPromptSubmit"
-  | "PreToolUse"
-  | "PostToolUse"
-  | "PreCompact"
-  | "SubagentStart"
-  | "SubagentStop"
-  | "Stop";
+  | "sessionStart"
+  | "sessionEnd"
+  | "userPromptSubmitted"
+  | "preToolUse"
+  | "postToolUse"
+  | "errorOccurred"
+  | "subagentStop"
+  | "agentStop";
 
 /** Agentic Workflow pattern types */
 export type AgenticWorkflowPattern =
@@ -150,14 +151,22 @@ export interface InitOptions {
   generationMode?: GenerationMode;
   selectedTypes?: ArtifactType[];
   useCases?: string[];
+  /** Generation speed: "standard" (single session, ~2 PRU) or "turbo" (parallel sessions, faster) */
+  speed?: SpeedStrategy;
 }
+
+/** Generation speed strategy */
+export type SpeedStrategy = "standard" | "turbo";
 
 /** Options for the generate command */
 export interface GenerateOptions {
-  static?: boolean;
   model?: string;
   mode?: GenerationMode;
   types?: ArtifactType[];
+  /** Generation speed: "standard" (single session, ~2 PRU) or "turbo" (parallel sessions, faster) */
+  speed?: SpeedStrategy;
+  /** Max autopilot continuation steps (default: 25 for planning, 15 for turbo writers) */
+  maxContinues?: number;
 }
 
 /** Options for the validate command */
@@ -195,6 +204,13 @@ export interface PlannedAgent {
     /** Skill description with USE FOR / DO NOT USE FOR trigger phrases for on-demand loading */
     description: string;
   };
+  /** Optional handoff targets for multi-agent workflows */
+  handoffs?: Array<{
+    label: string;
+    agent: string;
+    prompt: string;
+    send?: boolean;
+  }>;
 }
 
 /** Structured generation plan produced by the forge-planner agent */

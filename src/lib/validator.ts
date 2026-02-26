@@ -1,19 +1,75 @@
 import fs from "fs-extra";
 import path from "path";
+import { spawn } from "child_process";
 import YAML from "yaml";
 import type {
   ValidationReport,
   ValidationFinding,
   ArtifactType,
 } from "../types.js";
-import { isCopilotCliInstalled, callCopilotForJson } from "./copilot-cli.js";
+import { isCopilotCliInstalled } from "./copilot-cli.js";
+
+/**
+ * Lightweight single-shot Copilot CLI call for JSON output.
+ * Used only for validation fix prompts.
+ */
+function callLlmForJson<T = unknown>(
+  workingDir: string,
+  prompt: string,
+  options?: { model?: string; timeoutMs?: number },
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const args = ["-p", prompt, "--autopilot", "--no-ask-user"];
+    if (options?.model) args.push("--model", options.model);
+
+    const child = spawn("copilot", args, {
+      cwd: workingDir,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+
+    const chunks: Buffer[] = [];
+    child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
+
+    const timeout = options?.timeoutMs ?? 30_000;
+    const timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      reject(new Error(`Copilot CLI timed out after ${timeout}ms`));
+    }, timeout);
+
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      reject(new Error(`Failed to launch Copilot CLI: ${err.message}`));
+    });
+
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      const raw = Buffer.concat(chunks).toString("utf-8");
+      const jsonMatch = raw.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        reject(new Error(`No JSON found in Copilot output (exit ${code}): ${raw.slice(0, 300)}`));
+        return;
+      }
+      try {
+        resolve(JSON.parse(jsonMatch[0]) as T);
+      } catch (e) {
+        reject(new Error(`Failed to parse JSON: ${(e as Error).message}`));
+      }
+    });
+  });
+}
 
 // ─── Known VS Code Copilot tool names ───
 
-/** Recognized VS Code Copilot tool names. Unknown tools trigger a warning. */
+/** Recognized VS Code Copilot tool names and official aliases. Unknown tools trigger a warning. */
 const VALID_VSCODE_TOOLS = new Set([
-  // Core file operations
-  "read", "edit", "search",
+  // Official tool aliases (from GitHub Copilot CLI spec)
+  "execute", "shell", "Bash", "powershell",   // shell/terminal execution
+  "read", "Read", "NotebookRead",             // read files
+  "edit", "Edit", "MultiEdit", "Write", "NotebookEdit",  // modify files
+  "search", "Grep", "Glob",                   // search files/text
+  "agent", "custom-agent", "Task",            // invoke sub-agents
+  "web", "WebSearch", "WebFetch",             // fetch URLs
+  "todo", "TodoWrite",                        // task lists
   // Extended file tools
   "read_file", "create_file", "replace_string_in_file", "multi_replace_string_in_file",
   "file_search", "grep_search", "semantic_search", "list_dir",
@@ -199,8 +255,19 @@ async function autoFixFile(
   }
 
   // Fix: user-invocable as string → boolean
-  if (type === "agent" && typeof frontmatter["user-invocable"] === "string") {
+  if ((type === "agent" || type === "skill") && typeof frontmatter["user-invocable"] === "string") {
     frontmatter["user-invocable"] = frontmatter["user-invocable"] === "true";
+    modified = true;
+  }
+
+  // Fix: migrate deprecated infer → user-invocable + disable-model-invocation
+  if ((type === "agent" || type === "skill") && "infer" in frontmatter) {
+    const inferVal = frontmatter.infer;
+    if (inferVal === false) {
+      frontmatter["user-invocable"] = frontmatter["user-invocable"] ?? false;
+      frontmatter["disable-model-invocation"] = frontmatter["disable-model-invocation"] ?? true;
+    }
+    delete frontmatter.infer;
     modified = true;
   }
 
@@ -232,6 +299,7 @@ const VALID_FIELDS: Partial<Record<ArtifactType, Set<string>>> = {
     "mcp-servers",
     "handoffs",
     "argument-hint",
+    "infer",           // deprecated — auto-migrated, kept to avoid stripping before migration
   ]),
   prompt: new Set([
     "name",
@@ -248,6 +316,7 @@ const VALID_FIELDS: Partial<Record<ArtifactType, Set<string>>> = {
     "argument-hint",
     "user-invocable",
     "disable-model-invocation",
+    "infer",           // deprecated — auto-migrated, kept to avoid stripping before migration
   ]),
 };
 
@@ -295,8 +364,8 @@ export async function validateDirectory(dir: string): Promise<ValidationReport> 
 }
 
 const VALID_HOOK_EVENTS = new Set([
-  "SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse",
-  "PreCompact", "SubagentStart", "SubagentStop", "Stop",
+  "sessionStart", "sessionEnd", "userPromptSubmitted", "preToolUse",
+  "postToolUse", "errorOccurred", "subagentStop", "agentStop",
 ]);
 
 async function validateArtifactsInDir(
@@ -595,19 +664,30 @@ async function validateFile(
     hasError = true;
   }
 
-  // Agent-specific checks
-  if (type === "agent") {
+  // Agent/Skill-specific checks
+  if (type === "agent" || type === "skill") {
     if (typeof frontmatter["user-invocable"] === "string") {
       findings.push({
         severity: "error",
         file: filePath,
-        message:
-          'Field "user-invocable" must be a boolean (true/false), not a string',
+        message: 'Field "user-invocable" must be a boolean (true/false), not a string',
         field: "user-invocable",
         fixable: true,
       });
       hasError = true;
     }
+    // Warn about deprecated infer field
+    if ("infer" in frontmatter) {
+      findings.push({
+        severity: "warning",
+        file: filePath,
+        message: 'Field "infer" is deprecated. Use "user-invocable" and "disable-model-invocation" instead.',
+        field: "infer",
+        fixable: true,
+      });
+    }
+  }
+  if (type === "agent") {
     if (frontmatter.tools && !Array.isArray(frontmatter.tools)) {
       findings.push({
         severity: "error",
@@ -623,7 +703,10 @@ async function validateFile(
   // Validate tool names against known VS Code Copilot tools
   if ((type === "agent" || type === "prompt") && Array.isArray(frontmatter.tools)) {
     for (const tool of frontmatter.tools as string[]) {
-      if (typeof tool === "string" && !VALID_VSCODE_TOOLS.has(tool)) {
+      if (typeof tool !== "string") continue;
+      // Skip wildcards ("*"), MCP server patterns ("serverName/*"), and tool sets
+      if (tool === "*" || tool.includes("/") || tool.includes("*")) continue;
+      if (!VALID_VSCODE_TOOLS.has(tool)) {
         const suggestion = suggestToolName(tool);
         const hint = suggestion ? ` Did you mean "${suggestion}"?` : "";
         findings.push({
@@ -648,6 +731,21 @@ async function validateFile(
         field: "applyTo",
         fixable: true,
       });
+    }
+  }
+
+  // Skill-specific checks: name must match parent directory
+  if (type === "skill" && frontmatter.name) {
+    const parentDirName = path.basename(path.dirname(filePath));
+    if (parentDirName !== "skills" && frontmatter.name !== parentDirName) {
+      findings.push({
+        severity: "error",
+        file: filePath,
+        message: `Skill name "${frontmatter.name}" does not match parent directory "${parentDirName}". Per VS Code spec, the name field must match the directory name.`,
+        field: "name",
+        fixable: true,
+      });
+      hasError = true;
     }
   }
 
@@ -816,7 +914,7 @@ export async function fixWithLLM(
   }
 
   // Build the prompt and call the LLM
-  const { buildValidationFixPrompt } = await import("./copilot-cli.js");
+  const { buildValidationFixPrompt } = await import("./prompt-builder.js");
   const prompt = buildValidationFixPrompt(
     fixableFindings.map((f) => ({
       file: f.file,
@@ -829,7 +927,7 @@ export async function fixWithLLM(
 
   let corrections: Record<string, string>;
   try {
-    corrections = await callCopilotForJson<Record<string, string>>(
+    corrections = await callLlmForJson<Record<string, string>>(
       targetDir,
       prompt,
       { model: options?.model ?? "claude-sonnet-4.6", timeoutMs: 60_000 },

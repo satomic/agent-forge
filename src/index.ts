@@ -24,6 +24,7 @@ program
   .option("--model <model>", "Model to use for AI generation")
   .option("--generation-mode <mode>", "Generation mode (discovery, full, on-demand, mcp-server, hooks, agentic-workflow)")
   .option("--types <types>", "Comma-separated artifact types for on-demand mode (e.g., agent,hook,mcp-server)")
+  .option("--speed <speed>", "Generation speed: standard (single session, ~2 PRU) or turbo (parallel sessions, faster)")
   .option(
     "--use-cases <ids>",
     "Comma-separated gallery use case IDs (e.g., code-review,testing)",
@@ -37,22 +38,23 @@ program
       generationMode: opts.generationMode as GenerationMode | undefined,
       selectedTypes: opts.types?.split(",").map((s: string) => s.trim()) as ArtifactType[] | undefined,
       useCases: opts.useCases?.split(",").map((s: string) => s.trim()),
+      speed: opts.speed as import("./types.js").SpeedStrategy | undefined,
     });
   });
 
 program
   .command("generate <description>")
-  .description("Generate customization files directly into .github/ (power-user shortcut)")
-  .option("--static", "Force static template generation (skip Copilot CLI)", false)
+  .description("Generate customization files directly into .github/ (requires Copilot CLI)")
   .option("--model <model>", "Model to use for AI generation")
   .option("--mode <mode>", "Generation mode (discovery, full, on-demand, mcp-server, hooks, agentic-workflow)")
   .option("--types <types>", "Comma-separated artifact types for on-demand mode")
+  .option("--speed <speed>", "Generation speed: standard (single session, ~2 PRU) or turbo (parallel sessions, faster)")
   .action(async (description: string, opts) => {
     await generateCommand(description, {
-      static: opts.static,
       model: opts.model,
       mode: opts.mode as GenerationMode | undefined,
       types: opts.types?.split(",").map((s: string) => s.trim()) as ArtifactType[] | undefined,
+      speed: opts.speed as import("./types.js").SpeedStrategy | undefined,
     });
   });
 
