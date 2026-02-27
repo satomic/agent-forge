@@ -1,10 +1,14 @@
 import { Command } from "commander";
+import { createRequire } from "module";
 import { initCommand } from "./commands/init.js";
 import { generateCommand } from "./commands/generate.js";
 import { listCommand } from "./commands/list.js";
 import { validateCommand } from "./commands/validate.js";
 import { checkCommand } from "./commands/check.js";
 import type { InitMode, GenerationMode, ArtifactType, ValidateOptions } from "./types.js";
+
+const require = createRequire(import.meta.url);
+const { version } = require("../package.json") as { version: string };
 
 const program = new Command();
 
@@ -13,7 +17,7 @@ program
   .description(
     "Context Engineering Toolkit — generate GitHub Copilot customization files (agents, prompts, instructions, skills, hooks, MCP servers, agentic workflows)",
   )
-  .version("0.1.0");
+  .version(version);
 
 program
   .command("init")
