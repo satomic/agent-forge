@@ -105,10 +105,80 @@ export async function installGalleryUseCase(
   return result;
 }
 
+/** Directories to skip when symlinking a project into the temp workspace */
+const LINK_SKIP = new Set([
+  ".github", "node_modules", ".git", ".next", "dist", "build",
+  "out", "__pycache__", ".venv", "venv", "target", ".tox",
+  ".mypy_cache", ".pytest_cache", "coverage", ".turbo",
+]);
+
+/** Critical manifest files to copy as fallback when symlinks fail (Windows) */
+const FALLBACK_MANIFESTS = [
+  "package.json", "tsconfig.json", "README.md", "readme.md",
+  "pyproject.toml", "requirements.txt", "go.mod", "Cargo.toml",
+  "pom.xml", "build.gradle", "composer.json", "Gemfile",
+  "pubspec.yaml", "mix.exs", "Package.swift",
+  "next.config.js", "next.config.ts", "next.config.mjs",
+  "vite.config.ts", "vite.config.js", "angular.json",
+  "tailwind.config.js", "tailwind.config.ts",
+  "docker-compose.yml", "Dockerfile",
+];
+
+/**
+ * Symlink project files into the temp workspace so the brownfield planner
+ * and orchestrator can read the actual codebase via Copilot CLI's `read`/`search` tools.
+ *
+ * Skips directories that are large or irrelevant (node_modules, .git, dist, etc.).
+ * Falls back to copying critical manifest files if symlinks fail (e.g. Windows without dev mode).
+ */
+async function linkProjectIntoWorkspace(
+  projectDir: string,
+  tempDir: string,
+): Promise<void> {
+  const entries = await fs.readdir(projectDir, { withFileTypes: true });
+  let symlinkFailed = false;
+
+  for (const entry of entries) {
+    if (LINK_SKIP.has(entry.name)) continue;
+    // Don't overwrite directories we already created (e.g. .vscode)
+    const destPath = path.join(tempDir, entry.name);
+    if (await fs.pathExists(destPath)) continue;
+
+    const srcPath = path.join(projectDir, entry.name);
+    try {
+      await fs.symlink(srcPath, destPath);
+    } catch {
+      symlinkFailed = true;
+    }
+  }
+
+  // Fallback: copy critical manifest files if symlinking failed
+  if (symlinkFailed) {
+    for (const manifest of FALLBACK_MANIFESTS) {
+      const srcPath = path.join(projectDir, manifest);
+      const destPath = path.join(tempDir, manifest);
+      if (await fs.pathExists(srcPath) && !(await fs.pathExists(destPath))) {
+        await fs.copy(srcPath, destPath).catch(() => {});
+      }
+    }
+    // Also try to copy src/ directory for source pattern scanning
+    for (const sourceDir of ["src", "app", "lib", "packages"]) {
+      const srcPath = path.join(projectDir, sourceDir);
+      const destPath = path.join(tempDir, sourceDir);
+      if (await fs.pathExists(srcPath) && !(await fs.pathExists(destPath))) {
+        await fs.copy(srcPath, destPath).catch(() => {});
+      }
+    }
+  }
+}
+
 /**
  * Prepare a temporary workspace for Copilot CLI generation.
  * Creates a temp dir with the orchestrator agent, all sub-agent templates,
  * and lean workspace instructions. Returns temp dir path, slug, and detected domains.
+ *
+ * For brownfield pipelines, symlinks the real project files into the temp dir
+ * so the planner and orchestrator can scan the actual codebase.
  */
 export type Pipeline = "greenfield" | "brownfield";
 
@@ -116,6 +186,7 @@ export async function prepareGenerationWorkspace(
   description: string,
   mode: GenerationMode = "full",
   pipeline: Pipeline = "greenfield",
+  targetDir?: string,
 ) {
   const slug = deriveProjectName(description);
   const title = slugToTitle(slug);
@@ -176,6 +247,11 @@ export async function prepareGenerationWorkspace(
   );
 
   await Promise.all([...dirPromises, ...copyPromises]);
+
+  // Brownfield: symlink real project files so the planner/orchestrator can scan the codebase
+  if (pipeline === "brownfield" && targetDir) {
+    await linkProjectIntoWorkspace(targetDir, tempDir);
+  }
 
   return { tempDir, slug, title, domains, pipeline };
 }

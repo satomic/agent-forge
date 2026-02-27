@@ -140,7 +140,10 @@ export interface ValidationReport {
 }
 
 /** Init wizard mode */
-export type InitMode = "new" | "existing" | "gallery";
+export type InitMode = "create" | "analyze" | "templates";
+
+/** Analyze strategy — how to proceed after workspace scan */
+export type AnalyzeStrategy = "auto" | "guided";
 
 /** Options for the init command */
 export interface InitOptions {
@@ -148,8 +151,8 @@ export interface InitOptions {
   mode?: InitMode;
   description?: string;
   model?: string;
-  generationMode?: GenerationMode;
-  selectedTypes?: ArtifactType[];
+  /** Strategy for Analyze mode: "auto" (scan-only) or "guided" (scan + custom requirements) */
+  analyzeStrategy?: AnalyzeStrategy;
   useCases?: string[];
   /** Generation speed: "standard" (single session, ~2 PRU) or "turbo" (parallel sessions, faster) */
   speed?: SpeedStrategy;

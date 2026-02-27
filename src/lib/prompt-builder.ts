@@ -281,12 +281,24 @@ export function buildPlanningPrompt(
 
     sections.push(
       ``,
-      `**IMPORTANT**: You are in Discovery Mode. SCAN the project codebase before planning.`,
+      `**IMPORTANT**: You are in Discovery Mode. The project's source files are available in your working directory — you can directly read package.json, list src/, etc.`,
+      `SCAN the project codebase before planning. Do NOT skip scanning or plan from the description alone.`,
       `- Read the dependency manifest (package.json, pyproject.toml, etc.) → record the PRIMARY framework → this becomes the agent name`,
-      `- Count distinct architectural layers (frontend/backend/AI) → this determines agent count`,
+      `- List the src/ or app/ directory → identify architectural layers (frontend/backend/AI)`,
+      `- Count distinct architectural layers → this determines agent count`,
       `- Extract test runner, ORM, and CSS framework → these go into techStack and responsibilities`,
-      `- Read 2-3 source files → encode the actual patterns you find into responsibilities`,
+      `- Read 2-3 actual source files → encode the real patterns you find into responsibilities`,
       `Plan agents that target actual components/layers found in the codebase.`,
+      ``,
+    );
+  } else if (workspace) {
+    // Brownfield non-discovery mode: still tell the planner that project files are available
+    sections.push(
+      `## Workspace Context`,
+      ``,
+      `The project's source files are available in your working directory.`,
+      workspace.techStack.length > 0 ? `- Detected tech stack: ${workspace.techStack.join(", ")}` : ``,
+      `- You can read package.json, list src/, and scan source files to improve plan quality.`,
       ``,
     );
   }

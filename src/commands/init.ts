@@ -1,4 +1,4 @@
-import { select, checkbox, input, Separator } from "@inquirer/prompts";
+import { select, checkbox, input } from "@inquirer/prompts";
 import chalk from "chalk";
 import ora from "ora";
 import path from "path";
@@ -30,7 +30,7 @@ import {
   buildCopilotInstructionsPrompt,
 } from "../lib/prompt-builder.js";
 import { postGenerationValidateAndFix } from "../lib/validator.js";
-import type { InitOptions, InitMode, GenerationMode, ArtifactType, SpeedStrategy, WorkspaceInfo } from "../types.js";
+import type { InitOptions, InitMode, AnalyzeStrategy, GenerationMode, SpeedStrategy, WorkspaceInfo } from "../types.js";
 
 // ── Side-by-side AGENT-FORGE block art (6 rows) ───────────────────────
 const BANNER_ROWS = [
@@ -120,74 +120,211 @@ export async function animateLogo(): Promise<void> {
   process.stdout.write(showCursor);
 }
 
+// ── UI helpers ─────────────────────────────────────────────────────────
+
+const ACCENT = "#FF8C00";
+const ACCENT2 = "#FF6A00";
+
+/** Print a section header with consistent styling */
+function sectionHeader(label: string, width = 58): void {
+  const line = "─".repeat(Math.max(0, width - label.length - 5));
+  console.log();
+  console.log(chalk.hex(ACCENT).bold(`  ── ${label} ${line}`));
+  console.log();
+}
+
+/** Print a key-value detail line inside a section */
+function detail(key: string, value: string): void {
+  console.log(chalk.dim(`  │ ${key.padEnd(10)} ${value}`));
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  ENTRY POINT
+// ═══════════════════════════════════════════════════════════════════════
+
 export async function initCommand(
   options: InitOptions,
 ): Promise<void> {
   await animateLogo();
 
-  // 1. Mode selection
   const mode: InitMode = options.mode ?? await select({
-    message: "How would you like to start?",
+    message: "What would you like to do?",
     choices: [
-      { value: "new" as InitMode, name: `New project ${chalk.dim("— create a new folder with Copilot customizations")}` },
-      { value: "existing" as InitMode, name: `Existing project ${chalk.dim("— add Copilot customizations to this project")}` },
-      { value: "gallery" as InitMode, name: `Gallery ${chalk.dim("— install pre-built templates from the AGENT-FORGE gallery")}` },
+      {
+        value: "create" as InitMode,
+        name: `${chalk.hex(ACCENT).bold("Create")}      ${chalk.dim("— Design a new Copilot workspace from a description")}`,
+      },
+      {
+        value: "analyze" as InitMode,
+        name: `${chalk.hex(ACCENT2).bold("Analyze")}     ${chalk.dim("— Scan an existing project and generate configurations")}`,
+      },
+      {
+        value: "templates" as InitMode,
+        name: `${chalk.cyan.bold("Templates")}   ${chalk.dim("— Install pre-built configurations from the catalog")}`,
+      },
     ],
   });
 
-  // 2. Execute the selected mode
   switch (mode) {
-    case "new":
-      await handleNewProject(options);
+    case "create":
+      await handleCreate(options);
       break;
-    case "existing":
-      await handleExisting(process.cwd(), options);
+    case "analyze":
+      await handleAnalyze(process.cwd(), options);
       break;
-    case "gallery":
-      await handleGallery(process.cwd(), options);
+    case "templates":
+      await handleTemplates(process.cwd(), options);
       break;
   }
 }
 
-// ─── Mode: New project ───
+// ═══════════════════════════════════════════════════════════════════════
+//  PATH 1: CREATE
+// ═══════════════════════════════════════════════════════════════════════
 
-async function handleNewProject(
-  options: InitOptions,
-): Promise<void> {
+async function handleCreate(options: InitOptions): Promise<void> {
+  sectionHeader("Create");
+
   const description = options.description ?? await input({
-    message: "Describe your project:",
-    validate: (v) => v.trim() ? true : "Please enter a project description",
+    message: "Describe your use case:",
+    validate: (v) => v.trim() ? true : "Please enter a use case description",
   });
 
-  // Generation mode selection
-  const { generationMode, selectedTypes } = await selectGenerationMode(options, "new");
-
-  // Derive a short folder name from the description
   const folderName = deriveProjectName(description);
-
   const targetDir = path.resolve(folderName);
+
   if (await fs.pathExists(targetDir)) {
-    console.log(chalk.yellow(`  Directory "${folderName}" already exists. New files will be added.`));
+    console.log(chalk.yellow(`\n  Directory "${folderName}" already exists. New files will be added.`));
   } else {
     await fs.ensureDir(targetDir);
-    console.log(chalk.dim(`  Created ${folderName}/`));
+    console.log(chalk.dim(`\n  Created ${folderName}/`));
   }
 
-  await runGeneration(targetDir, description, { ...options, generationMode, selectedTypes }, undefined, "greenfield");
+  await runGeneration(targetDir, description, "full", options, undefined, "greenfield");
 
   console.log();
-  console.log(chalk.bold("  To get started:"));
+  console.log(chalk.bold("  Get started:"));
   console.log(`    ${chalk.cyan(`cd ${folderName}`)}`);
   console.log(`    Open Copilot Chat: ${chalk.dim("⌘⇧I / Ctrl+Shift+I")}`);
   console.log();
 }
 
-// ─── Mode: From gallery ───
+// ═══════════════════════════════════════════════════════════════════════
+//  PATH 2: ANALYZE
+// ═══════════════════════════════════════════════════════════════════════
 
-async function handleGallery(
+async function handleAnalyze(
   targetDir: string,
   options: InitOptions,
 ): Promise<void> {
+  sectionHeader("Analyze");
+
+  // Always scan first
+  const spinner = ora("Scanning workspace...").start();
+  const workspace = await detectWorkspace(targetDir);
+  spinner.succeed("Workspace scanned");
+
+  // Boxed project summary
+  printProjectSummary(workspace);
+
+  // Strategy selection
+  const strategy: AnalyzeStrategy = options.analyzeStrategy ?? await select<AnalyzeStrategy>({
+    message: "How would you like to proceed?",
+    choices: [
+      {
+        value: "auto" as AnalyzeStrategy,
+        name: `${chalk.green("Auto-generate")}  ${chalk.dim("— Generate everything based on scan results")} ${chalk.green("(recommended)")}`,
+      },
+      {
+        value: "guided" as AnalyzeStrategy,
+        name: `${chalk.white("Guided")}         ${chalk.dim("— Add custom requirements on top of scan results")}`,
+      },
+    ],
+    default: "auto",
+  });
+
+  let description: string;
+  let generationMode: GenerationMode;
+
+  if (strategy === "auto") {
+    // Auto-derive description from workspace — no user prompt
+    description = buildDiscoveryDescription(workspace);
+    generationMode = "discovery";
+    console.log(chalk.dim(`\n  Auto-detected: ${description}`));
+  } else {
+    // Guided — prompt for additional requirements
+    const requirements = options.description ?? await input({
+      message: "Describe additional requirements:",
+      validate: (v) => v.trim() ? true : "Please enter additional requirements",
+    });
+
+    const techDesc = workspace.techStack.length > 0
+      ? ` This is a ${workspace.projectType ?? "software"} project using ${workspace.techStack.join(", ")}.`
+      : "";
+    description = requirements + techDesc;
+    generationMode = "full";
+  }
+
+  await runGeneration(targetDir, description, generationMode, options, workspace, "brownfield");
+  printNextSteps();
+}
+
+/** Render workspace scan results in a boxed summary */
+function printProjectSummary(workspace: WorkspaceInfo): void {
+  const items: Array<[string, string]> = [];
+
+  if (workspace.techStack.length > 0) {
+    items.push(["Stack", workspace.techStack.join(", ")]);
+  }
+  if (workspace.projectType) {
+    items.push(["Type", workspace.projectType]);
+  }
+
+  // Existing customizations
+  const counts: string[] = [];
+  if (workspace.existingAgents.length > 0) counts.push(`${workspace.existingAgents.length} agents`);
+  if (workspace.existingPrompts.length > 0) counts.push(`${workspace.existingPrompts.length} prompts`);
+  if (workspace.existingInstructions.length > 0) counts.push(`${workspace.existingInstructions.length} instructions`);
+  if (workspace.existingSkills.length > 0) counts.push(`${workspace.existingSkills.length} skills`);
+  if (workspace.existingHooks.length > 0) counts.push(`${workspace.existingHooks.length} hooks`);
+  if (workspace.existingWorkflows.length > 0) counts.push(`${workspace.existingWorkflows.length} workflows`);
+
+  if (counts.length > 0) {
+    items.push(["Existing", counts.join(" · ")]);
+  }
+
+  if (items.length === 0) {
+    console.log(chalk.dim("  No project files detected.\n"));
+    return;
+  }
+
+  // Compute box width
+  const maxValueLen = Math.max(...items.map(([k, v]) => k.length + v.length + 4));
+  const boxWidth = Math.max(maxValueLen + 6, 48);
+
+  console.log();
+  console.log(chalk.hex(ACCENT)(`  ┌─ Project Summary ${"─".repeat(Math.max(0, boxWidth - 20))}┐`));
+  for (const [key, val] of items) {
+    const content = `  ${chalk.bold(key + ":")}  ${val}`;
+    // We need to measure the raw (no-ANSI) length for padding
+    const rawLen = `  ${key}:  ${val}`.length;
+    const pad = Math.max(0, boxWidth - rawLen);
+    console.log(chalk.hex(ACCENT)("  │") + content + " ".repeat(pad) + chalk.hex(ACCENT)("│"));
+  }
+  console.log(chalk.hex(ACCENT)(`  └${"─".repeat(boxWidth + 1)}┘`));
+  console.log();
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  PATH 3: TEMPLATES
+// ═══════════════════════════════════════════════════════════════════════
+
+async function handleTemplates(
+  targetDir: string,
+  options: InitOptions,
+): Promise<void> {
+  sectionHeader("Templates");
+
   const gallery = getGallery();
   let selectedIds: string[];
 
@@ -195,157 +332,53 @@ async function handleGallery(
     selectedIds = options.useCases;
   } else {
     selectedIds = await checkbox({
-      message: "Pick use cases to install (space to select, enter to confirm):",
+      message: "Select configurations to install:",
       choices: gallery.map((entry) => ({
         value: entry.id,
-        name: `${entry.name} ${chalk.dim("— " + entry.description)}`,
+        name: `${chalk.white(entry.name.padEnd(28))} ${chalk.dim("— " + entry.description)}`,
         checked: false,
       })),
     });
   }
 
   if (selectedIds.length === 0) {
-    console.log(chalk.yellow("  No use cases selected."));
+    console.log(chalk.yellow("  No templates selected."));
     return;
   }
 
   console.log();
+  let installed = 0;
   for (const id of selectedIds) {
     const entry = gallery.find((g) => g.id === id);
     const ucSpinner = ora(`Installing ${entry?.name ?? id}...`).start();
     try {
       const result = await installGalleryUseCase(targetDir, id, { force: options.force });
-      ucSpinner.succeed(`${entry?.name ?? id} (${result.copied.length} files)`);
+      ucSpinner.succeed(`${entry?.name ?? id} ${chalk.dim(`(${result.copied.length} files)`)}`);
+      installed++;
     } catch {
       ucSpinner.fail(`Failed to install ${id}`);
     }
   }
 
   console.log();
-  console.log(chalk.green.bold("✓ Installed!"));
+  if (installed > 0) {
+    console.log(`  ${chalk.green.bold("✓")} ${chalk.bold(String(installed))} template${installed !== 1 ? "s" : ""} installed successfully`);
+  }
   printNextSteps();
 }
 
-// ─── Mode: Existing project ───
-
-async function handleExisting(
-  targetDir: string,
-  options: InitOptions,
-): Promise<void> {
-  const spinner = ora("Scanning workspace...").start();
-  const workspace = await detectWorkspace(targetDir);
-  spinner.succeed("Workspace scanned");
-
-  if (workspace.techStack.length > 0) {
-    console.log(chalk.dim(`  Tech stack: ${workspace.techStack.join(", ")}`));
-  }
-  if (workspace.projectType) {
-    console.log(chalk.dim(`  Project type: ${workspace.projectType}`));
-  }
-  if (workspace.hasGitHub) {
-    const counts = [
-      workspace.existingAgents.length && `${workspace.existingAgents.length} agents`,
-      workspace.existingPrompts.length && `${workspace.existingPrompts.length} prompts`,
-      workspace.existingInstructions.length && `${workspace.existingInstructions.length} instructions`,
-      workspace.existingSkills.length && `${workspace.existingSkills.length} skills`,
-      workspace.existingHooks.length && `${workspace.existingHooks.length} hooks`,
-      workspace.existingWorkflows.length && `${workspace.existingWorkflows.length} workflows`,
-    ].filter(Boolean).join(", ");
-    if (counts) {
-      console.log(chalk.dim(`  Existing customizations: ${counts} (will not be modified)`));
-    }
-  }
-  console.log();
-
-  // Generation mode selection
-  const { generationMode, selectedTypes } = await selectGenerationMode(options, "existing");
-
-  let description: string;
-
-  if (generationMode === "discovery") {
-    // Auto-derive description from workspace analysis — no user prompt needed
-    description = buildDiscoveryDescription(workspace);
-    console.log(chalk.dim(`  Auto-detected: ${description}`));
-  } else {
-    description = options.description ?? await input({
-      message: "Describe what you want to automate for this project:",
-      validate: (v) => v.trim() ? true : "Please enter a description",
-    });
-
-    // Enhanced description with codebase context
-    const techDesc = workspace.techStack.length > 0
-      ? ` This is a ${workspace.projectType ?? "software"} project using ${workspace.techStack.join(", ")}.`
-      : "";
-    description = description + techDesc;
-  }
-
-  await runGeneration(targetDir, description, { ...options, generationMode, selectedTypes }, workspace, "brownfield");
-  printNextSteps();
-}
-
-// ─── Generation mode selection ───
-
-async function selectGenerationMode(
-  options: InitOptions,
-  context: "new" | "existing" = "new",
-): Promise<{ generationMode: GenerationMode; selectedTypes?: ArtifactType[] }> {
-  if (options.generationMode) {
-    return { generationMode: options.generationMode, selectedTypes: options.selectedTypes };
-  }
-
-  const recommended = chalk.green(" (recommended)");
-
-  const generationMode = await select<GenerationMode>({
-    message: "What would you like to generate?",
-    choices: [
-      { value: "discovery" as GenerationMode, name: `Auto-detect${context === "existing" ? recommended : ""} ${chalk.dim("— scan your project and generate everything automatically")}` },
-      { value: "full" as GenerationMode, name: `Custom${context === "new" ? recommended : ""}      ${chalk.dim("— describe your use case, generate agents + instructions + prompts + skills")}` },
-      { value: "on-demand" as GenerationMode, name: `Pick & choose  ${chalk.dim("— select which artifact types to generate")}` },
-      new Separator(),
-      { value: "mcp-server" as GenerationMode, name: `MCP servers     ${chalk.dim("— add tool servers to .vscode/mcp.json")}` },
-      { value: "hooks" as GenerationMode, name: `Hooks           ${chalk.dim("— add lifecycle automation (pre-commit, format, lint)")}` },
-      { value: "agentic-workflow" as GenerationMode, name: `Workflows       ${chalk.dim("— create GitHub Actions with AI automation")}` },
-    ],
-    default: context === "existing" ? "discovery" : "full",
-  });
-
-  let selectedTypes: ArtifactType[] | undefined;
-
-  if (generationMode === "on-demand") {
-    selectedTypes = await checkbox<ArtifactType>({
-      message: "Select artifact types to generate:",
-      choices: [
-        { value: "agent" as ArtifactType, name: `Agents          ${chalk.dim("— custom AI personas")}`, checked: true },
-        { value: "instruction" as ArtifactType, name: `Instructions    ${chalk.dim("— coding standards & rules")}`, checked: true },
-        { value: "prompt" as ArtifactType, name: `Prompts         ${chalk.dim("— reusable task templates")}`, checked: true },
-        { value: "skill" as ArtifactType, name: `Skills          ${chalk.dim("— domain knowledge packs")}`, checked: true },
-        new Separator(),
-        { value: "hook" as ArtifactType, name: `Hooks           ${chalk.dim("— lifecycle automation scripts")}` },
-        { value: "mcp-server" as ArtifactType, name: `MCP servers     ${chalk.dim("— external tool integrations")}` },
-        { value: "agentic-workflow" as ArtifactType, name: `Workflows       ${chalk.dim("— GitHub Actions AI automation")}` },
-      ],
-    });
-
-    if (selectedTypes.length === 0) {
-      console.log(chalk.yellow("  No types selected. Using full context mode."));
-      return { generationMode: "full" };
-    }
-  }
-
-  return { generationMode, selectedTypes };
-}
-
-// ─── Shared generation logic ───
+// ═══════════════════════════════════════════════════════════════════════
+//  SHARED GENERATION PIPELINE
+// ═══════════════════════════════════════════════════════════════════════
 
 async function runGeneration(
   targetDir: string,
   description: string,
+  generationMode: GenerationMode,
   options: InitOptions,
   workspace?: WorkspaceInfo,
   pipeline: "greenfield" | "brownfield" = "greenfield",
 ): Promise<void> {
-  const mode = options.generationMode ?? "full";
-
   // Copilot CLI is required
   if (!isCopilotCliInstalled()) {
     console.log(chalk.red("  ✗ GitHub Copilot CLI is required for generation."));
@@ -355,32 +388,50 @@ async function runGeneration(
     console.log();
     console.log(chalk.dim("  Then re-run: forge init"));
     console.log();
-    console.log(chalk.dim("  Gallery mode works without Copilot CLI — run: forge init --mode gallery"));
+    console.log(chalk.dim("  Templates work without Copilot CLI — run: forge init --mode templates"));
     return;
   }
 
+  // Model selection
   const model = options.model ?? await selectModel();
 
+  // Speed selection (ask early so user makes all decisions upfront)
+  const multiplier = getModelMultiplier(model);
+  const speed: SpeedStrategy = options.speed ?? await select<SpeedStrategy>({
+    message: "Generation speed:",
+    choices: [
+      {
+        value: "standard" as SpeedStrategy,
+        name: `${chalk.white("Standard")}  ${chalk.dim(`— Sequential generation, ~${2 * multiplier} PRU`)}`,
+      },
+      {
+        value: "turbo" as SpeedStrategy,
+        name: `${chalk.hex("#FFD700")("Turbo")}     ${chalk.dim("— Parallel generation, faster")} ${chalk.hex("#FFD700")("⚡")}`,
+      },
+    ],
+    default: "standard",
+  });
+
+  // Prepare workspace
   const spinner = ora("Preparing workspace...").start();
-  const { tempDir, slug, title, domains } = await prepareGenerationWorkspace(description, mode, pipeline);
+  const { tempDir, slug, title, domains } = await prepareGenerationWorkspace(description, generationMode, pipeline, pipeline === "brownfield" ? targetDir : undefined);
   spinner.succeed("Workspace ready");
 
-  const pipelineLabel = pipeline === "brownfield" ? "brownfield" : "greenfield";
+  const pipelineLabel = pipeline === "brownfield" ? "Analyze" : "Create";
   const plannerAgent = pipeline === "brownfield" ? "forge-brownfield-planner" : "forge-greenfield-planner";
   const orchestratorAgent = pipeline === "brownfield" ? "forge-brownfield-orchestrator" : "forge-greenfield-orchestrator";
 
-  // Phase 1: Planning
-  console.log();
-  console.log(chalk.hex("#FF8C00").bold("  ── Phase 1: Planning " + "─".repeat(36)));
-  console.log(chalk.dim(`  │ Pipeline:  ${pipelineLabel}`));
-  console.log(chalk.dim(`  │ Model:     ${model}`));
-  console.log(chalk.dim(`  │ Mode:      ${mode}`));
+  // ── Phase 1: Planning ──────────────────────────────────────────────
+  sectionHeader("Phase 1 · Planning");
+  detail("Pipeline", pipelineLabel);
+  detail("Model", model);
+  detail("Speed", speed === "turbo" ? "Turbo ⚡" : "Standard");
   if (domains.length > 1) {
-    console.log(chalk.dim(`  │ Domains:   ${domains.map((d) => d.title).join(", ")}`));
+    detail("Domains", domains.map((d) => d.title).join(", "));
   }
   console.log();
 
-  const planPrompt = buildPlanningPrompt(mode, slug, title, description, domains, workspace, options.selectedTypes);
+  const planPrompt = buildPlanningPrompt(generationMode, slug, title, description, domains, workspace);
   const planExitCode = await launchCopilotCli(tempDir, planPrompt, {
     model,
     agent: plannerAgent,
@@ -392,31 +443,17 @@ async function runGeneration(
     console.log(chalk.yellow("\n  ⚠  Planner exited with warnings."));
   }
 
-  // Read the plan
   const planSpinner = ora("Reading plan...").start();
   const plan = await readPlanFile(tempDir);
   planSpinner.succeed(`Plan ready — ${plan.agents.length} agent(s): ${plan.agents.map((a) => a.name).join(", ")}`);
 
-  // Prepare workspace directories for Phase 2
   await prepareWorkspaceForPlan(tempDir, plan);
-
-  // Speed selection
-  const multiplier = getModelMultiplier(model);
-  const speed: SpeedStrategy = options.speed ?? await select<SpeedStrategy>({
-    message: "Generation speed:",
-    choices: [
-      { value: "standard" as SpeedStrategy, name: `Standard  ${chalk.dim(`— single session, ~${2 * multiplier} PRU (slower)`)}` },
-      { value: "turbo" as SpeedStrategy, name: `Turbo     ${chalk.dim(`— parallel sessions, ~${(plan.agents.length + 2) * multiplier} PRU (fastest)`)}` },
-    ],
-    default: "standard",
-  });
 
   const totalPru = (speed === "turbo" ? plan.agents.length + 2 : 2) * multiplier;
 
-  // Phase 2: Generate artifacts
-  console.log();
-  const speedLabel = speed === "turbo" ? "⚡ Turbo" : "Standard";
-  console.log(chalk.hex("#FF8C00").bold("  ── Phase 2: Generating (" + speedLabel + ") " + "─".repeat(Math.max(0, 34 - speedLabel.length))));
+  // ── Phase 2: Generating ────────────────────────────────────────────
+  const speedLabel = speed === "turbo" ? "Turbo ⚡" : "Standard";
+  sectionHeader(`Phase 2 · Generating (${speedLabel})`);
 
   let exitCode: number;
   const phase2Start = Date.now();
@@ -424,20 +461,17 @@ async function runGeneration(
   let instrDurationMs = 0;
 
   if (speed === "turbo") {
-    // Turbo: spawn parallel Copilot CLI processes per writer agent
-    const writerTasks = buildWriterPrompts(plan, mode);
-    console.log(chalk.dim(`  │ Writers:   ${writerTasks.length} parallel sessions`));
-    console.log(chalk.dim(`  │ Estimate:  ~${(writerTasks.length + 1) * multiplier} PRU`));
+    const writerTasks = buildWriterPrompts(plan, generationMode);
+    detail("Writers", `${writerTasks.length} parallel sessions`);
+    detail("Estimate", `~${(writerTasks.length + 1) * multiplier} PRU`);
     console.log();
 
-    // Show pending writers
     for (const task of writerTasks) {
       const label = WRITER_LABELS[task.agent] ?? task.agent;
       console.log(chalk.dim(`    ◦ ${label}`));
     }
     console.log();
 
-    // Run in parallel with progress callback
     const result = await launchCopilotCliParallel(tempDir, writerTasks, { model }, (wr) => {
       const label = (WRITER_LABELS[wr.agent] ?? wr.agent).padEnd(22);
       const duration = chalk.dim(formatDuration(wr.durationMs));
@@ -449,7 +483,6 @@ async function runGeneration(
     });
     writerDurationMs = result.totalDurationMs;
 
-    // Create copilot-instructions.md after all writers complete
     console.log();
     const instrStart = Date.now();
     const instrSpinner = ora("  Creating copilot-instructions.md...").start();
@@ -469,12 +502,11 @@ async function runGeneration(
 
     exitCode = result.failed > 0 ? 1 : 0;
   } else {
-    // Standard: single orchestrator process
-    console.log(chalk.dim(`  │ Session:   single orchestrator`));
-    console.log(chalk.dim(`  │ Estimate:  ~${2 * multiplier} PRU`));
+    detail("Session", "single orchestrator");
+    detail("Estimate", `~${2 * multiplier} PRU`);
     console.log();
 
-    const orchPrompt = buildOrchestrationPromptFromPlan(plan, mode);
+    const orchPrompt = buildOrchestrationPromptFromPlan(plan, generationMode);
     exitCode = await launchCopilotCli(tempDir, orchPrompt, { model, agent: orchestratorAgent });
   }
 
@@ -483,21 +515,20 @@ async function runGeneration(
   const installed = await installGeneratedArtifacts(tempDir, targetDir, plan.slug);
   cleanupGenerationWorkspace(tempDir).catch(() => {});
 
-  // Phase 3: Validation
-  console.log();
-  console.log(chalk.hex("#FF8C00").bold("  ── Phase 3: Validation " + "─".repeat(34)));
-  const fixSpinner2 = ora("  Checking artifacts...").start();
+  // ── Phase 3: Validation ────────────────────────────────────────────
+  sectionHeader("Phase 3 · Validation");
+  const fixSpinner = ora("  Checking artifacts...").start();
   const report = await postGenerationValidateAndFix(targetDir);
   if (report.errors.length === 0 && report.warnings.length === 0) {
-    fixSpinner2.succeed(`  ${report.passed.length} files passed — all checks clean`);
+    fixSpinner.succeed(`  ${report.passed.length} files passed — all checks clean`);
   } else if (report.errors.length === 0) {
-    fixSpinner2.succeed(`  ${report.passed.length} files passed, ${report.warnings.length} warning(s)`);
+    fixSpinner.succeed(`  ${report.passed.length} files passed, ${report.warnings.length} warning(s)`);
     for (const w of report.warnings) {
       const fileName = path.basename(w.file);
       console.log(chalk.dim(`    ⚠ ${fileName}: ${w.message}`));
     }
   } else {
-    fixSpinner2.warn(`  ${report.errors.length} error(s) remain after auto-fix`);
+    fixSpinner.warn(`  ${report.errors.length} error(s) remain after auto-fix`);
     for (const e of report.errors) {
       const fileName = path.basename(e.file);
       console.log(chalk.red(`    ✗ ${fileName}: ${e.message}`));
@@ -508,30 +539,32 @@ async function runGeneration(
     }
   }
 
-  // Results
-  console.log();
-  console.log(chalk.hex("#FF8C00").bold("  ── Results " + "─".repeat(46)));
+  // ── Results ────────────────────────────────────────────────────────
+  sectionHeader("Results");
 
   if (exitCode === 0) {
     const durationStr = formatDuration(phase2Duration);
-    console.log();
     console.log(`  ${chalk.green.bold("✓")} Generation complete`);
     console.log();
-    console.log(chalk.dim("  ┌─────────────────────────────────────────┐"));
-    console.log(chalk.dim("  │") + `  Files:     ${chalk.bold(String(installed.length))}`.padEnd(42) + chalk.dim("│"));
-    console.log(chalk.dim("  │") + `  Duration:  ${chalk.bold(durationStr)}${speed === "turbo" ? chalk.dim(` (writers ${formatDuration(writerDurationMs)})`) : ""}`.padEnd(42) + chalk.dim("│"));
-    console.log(chalk.dim("  │") + `  Cost:      ${chalk.bold(`~${totalPru} PRU`)}`.padEnd(42) + chalk.dim("│"));
-    console.log(chalk.dim("  │") + `  Model:     ${chalk.bold(model)}`.padEnd(42) + chalk.dim("│"));
-    console.log(chalk.dim("  │") + `  Speed:     ${chalk.bold(speed === "turbo" ? "Turbo (parallel)" : "Standard")}`.padEnd(42) + chalk.dim("│"));
-    console.log(chalk.dim("  └─────────────────────────────────────────┘"));
+
+    const boxWidth = 45;
+    console.log(chalk.dim(`  ┌${"─".repeat(boxWidth)}┐`));
+    console.log(chalk.dim("  │") + `  Files:     ${chalk.bold(String(installed.length))}`.padEnd(boxWidth) + chalk.dim("│"));
+    console.log(chalk.dim("  │") + `  Duration:  ${chalk.bold(durationStr)}${speed === "turbo" ? chalk.dim(` (writers ${formatDuration(writerDurationMs)})`) : ""}`.padEnd(boxWidth) + chalk.dim("│"));
+    console.log(chalk.dim("  │") + `  Cost:      ${chalk.bold(`~${totalPru} PRU`)}`.padEnd(boxWidth) + chalk.dim("│"));
+    console.log(chalk.dim("  │") + `  Model:     ${chalk.bold(model)}`.padEnd(boxWidth) + chalk.dim("│"));
+    console.log(chalk.dim("  │") + `  Speed:     ${chalk.bold(speed === "turbo" ? "Turbo (parallel)" : "Standard")}`.padEnd(boxWidth) + chalk.dim("│"));
+    console.log(chalk.dim(`  └${"─".repeat(boxWidth)}┘`));
+
     printGeneratedFiles(plan.slug, installed);
   } else {
-    console.log();
     console.log(chalk.yellow("  ⚠  Generation finished with warnings. Review the generated files."));
   }
 }
 
-// ─── Discovery helpers ───
+// ═══════════════════════════════════════════════════════════════════════
+//  HELPERS
+// ═══════════════════════════════════════════════════════════════════════
 
 function buildDiscoveryDescription(workspace: WorkspaceInfo): string {
   const parts: string[] = [];
@@ -563,14 +596,11 @@ function buildDiscoveryDescription(workspace: WorkspaceInfo): string {
   return desc;
 }
 
-// ─── Helpers ───
-
 function printGeneratedFiles(_slug: string, files: string[]): void {
   const githubFiles = files.filter((f) => !f.startsWith(".vscode/"));
   const vscodeFiles = files.filter((f) => f.startsWith(".vscode/"));
 
   if (githubFiles.length > 0) {
-    // Group files by subdirectory
     const groups = new Map<string, string[]>();
     for (const f of githubFiles) {
       const parts = f.split("/");
