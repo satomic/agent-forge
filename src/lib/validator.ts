@@ -25,6 +25,7 @@ function callLlmForJson<T = unknown>(
     const child = spawn("copilot", args, {
       cwd: workingDir,
       stdio: ["pipe", "pipe", "pipe"],
+      shell: true,
     });
 
     const chunks: Buffer[] = [];

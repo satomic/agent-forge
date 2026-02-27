@@ -113,6 +113,7 @@ export function launchCopilotCli(
     const child = spawn("copilot", args, {
       cwd: workingDir,
       stdio: options?.quiet ? "pipe" : "inherit",
+      shell: true,
     });
 
     child.on("error", (err) => {
