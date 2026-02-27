@@ -1,7 +1,7 @@
 {
   "name": "@agent-forge-copilot/cli",
-  "version": "0.1.4",
-  "description": "Context Engineering Toolkit — generate GitHub Copilot customization files (agents, prompts, instructions, skills, hooks, MCP servers, agentic workflows) with an interactive CLI and built-in use case gallery.",
+  "version": "0.1.5",
+  "description": "Context Engineering Toolkit — generate GitHub Copilot customization files (agents, prompts, instructions, skills, hooks, MCP servers, agentic workflows) via a multi-agent AI pipeline with interactive CLI and 11 built-in templates.",
   "type": "module",
   "bin": {
     "forge": "dist/index.js"
@@ -27,9 +27,17 @@
     "prompts",
     "instructions",
     "skills",
+    "hooks",
+    "mcp",
+    "mcp-server",
+    "agentic-workflow",
     "vscode",
     "cli",
-    "scaffold"
+    "scaffold",
+    "ai-agents",
+    "multi-agent",
+    "code-generation",
+    "developer-tools"
   ],
   "author": "Agent-Forge Contributors",
   "license": "MIT",
