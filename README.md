@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>Context Engineering Toolkit for GitHub Copilot.</strong><br/>
+  <strong>AI-Native Context Kit for GitHub Copilot-Driven Development.</strong><br/>
   Generate agents, prompts, instructions, skills, hooks, MCP servers, and agentic workflows — powered by a multi-agent AI pipeline.
 </p>
 
@@ -39,42 +39,34 @@ That's it. The CLI walks you through everything interactively.
 
 ### What happens when you run it
 
-The CLI guides you through four steps:
+The CLI guides you through a few steps depending on the mode you choose:
 
-**1. What's your starting point?**
-
-```
-? How would you like to start?
-❯ New project        — describe what to build, AI generates Copilot files
-  Existing project   — scans your code, generates files that fit your stack
-  Gallery            — pick from 11 pre-built templates
-```
-
-**2. What do you want to generate?**
+**1. What would you like to do?**
 
 ```
-? What would you like to generate?
-❯ Auto-detect     — scans your project, generates everything (recommended)
-  Custom          — describe your use case, AI creates tailored files
-  Pick & choose   — select specific artifact types
-  MCP servers     — add tool servers to .vscode/mcp.json
-  Hooks           — add lifecycle automation (format, lint, security)
-  Workflows       — create GitHub Actions with AI automation
+? What would you like to do?
+❯ Create      — Design a new Copilot workspace from a description
+  Analyze     — Scan an existing project and generate configurations
+  Templates   — Install pre-built configurations from the catalog
 ```
 
-**3. Describe your use case**
+**2. Mode-specific flow**
 
-```
-? Describe what you want to automate:
-> API rate limiter with per-tenant quotas
-```
+- **Create** → describe your use case, pick a model and speed, AI generates everything
+- **Analyze** → scans your codebase, then asks:
+  ```
+  ? How would you like to proceed?
+  ❯ Auto-generate  — Generate everything based on scan results (recommended)
+    Guided         — Add custom requirements on top of scan results
+  ```
+- **Templates** → select from 11 pre-built configurations via checkboxes
 
-**4. Pick your speed**
+**3. Pick your speed** (Create & Analyze only)
 
 ```
 ? Generation speed:
-❯ Standard  — single session, ~2 PRU (slower)
-  Turbo     — parallel sessions, ~N PRU (fastest)
+❯ Standard  — Sequential generation, ~N PRU
+  Turbo     — Parallel generation, faster ⚡
 ```
 
 Done. Your files are generated, validated, and ready in `.github/`.
@@ -122,7 +114,7 @@ Instead of generating from scratch, you can pick from **11 ready-to-use template
 Install specific templates without the interactive flow:
 
 ```bash
-forge init --mode gallery --use-cases code-review,testing
+forge init --mode templates --use-cases code-review,testing
 ```
 
 ---
@@ -132,7 +124,7 @@ forge init --mode gallery --use-cases code-review,testing
 ### Add code review to an existing project
 
 ```bash
-forge init --mode gallery --use-cases code-review
+forge init --mode templates --use-cases code-review
 ```
 
 Installs 4 files: a code review agent, a prompt, instructions, and a skill.
@@ -167,7 +159,7 @@ forge generate "Testing tools" --mode on-demand --types agent,hook
 forge check
 ```
 
-Verifies that Node.js, VS Code, Git, GitHub CLI, Copilot CLI, and Docker are available.
+Verifies that Node.js, VS Code, VS Code Insiders, Git, GitHub CLI, Copilot CLI, and Docker are available.
 
 ### See what's installed
 
@@ -191,7 +183,7 @@ Checks your `.github/` customization files for schema errors and quality issues.
 
 **Required:**
 - **Node.js 18+**
-- **VS Code** with the GitHub Copilot extension (and `chat.agent.enabled: true` in settings)
+- **VS Code** (or VS Code Insiders) with the GitHub Copilot extension (and `chat.agent.enabled: true` in settings)
 - **[GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-in-the-command-line)** — powers the multi-agent generation pipeline (`npm install -g @github/copilot`)
 
 **Optional:**
@@ -273,33 +265,32 @@ When generating into a project that already has `.github/` files, AGENT-FORGE de
 
 | Flag | Description |
 |------|-------------|
-| `--mode <mode>` | Skip mode prompt — `new`, `existing`, or `gallery` |
+| `--mode <mode>` | Wizard mode — `create`, `analyze`, or `templates` |
 | `--description <text>` | Use case description (skip prompt) |
 | `--model <model>` | AI model to use (skip prompt) |
-| `--generation-mode <mode>` | `discovery`, `full`, `on-demand`, `mcp-server`, `hooks`, `agentic-workflow` |
-| `--types <types>` | Comma-separated artifact types for on-demand mode (e.g., `agent,hook,mcp-server`) |
-| `--speed <speed>` | `standard` (single session, ~2 PRU) or `turbo` (parallel, faster) |
-| `--use-cases <ids>` | Comma-separated gallery IDs (skip prompt) |
+| `--strategy <strategy>` | Analyze strategy: `auto` (scan-only) or `guided` (scan + custom requirements) |
+| `--speed <speed>` | `standard` (sequential, ~2 PRU) or `turbo` (parallel, faster) |
+| `--use-cases <ids>` | Comma-separated template IDs (skip prompt) |
 | `--force` | Overwrite existing files |
 
 ```bash
 # Fully interactive
 forge init
 
-# Install gallery templates non-interactively
-forge init --mode gallery --use-cases code-review,testing
+# Install pre-built templates non-interactively
+forge init --mode templates --use-cases code-review,testing
 
-# Add to existing project with a description
-forge init --mode existing --description "CI/CD pipeline guardian"
+# Analyze existing project with a description
+forge init --mode analyze --description "CI/CD pipeline guardian"
 
 # New project with a specific model and turbo speed
-forge init --mode new --description "API rate limiter" --model claude-sonnet-4.6 --speed turbo
+forge init --mode create --description "API rate limiter" --model claude-sonnet-4.6 --speed turbo
 
-# Generate only hooks for an existing project
-forge init --mode existing --generation-mode hooks
+# Analyze with auto-generate strategy (no extra prompts)
+forge init --mode analyze --strategy auto
 
-# Pick specific artifact types
-forge init --mode new --generation-mode on-demand --types agent,hook,mcp-server
+# Analyze with guided strategy (add custom requirements)
+forge init --mode analyze --strategy guided --description "Add security scanning"
 ```
 
 </details>
@@ -337,7 +328,7 @@ forge generate "Full-stack app" --speed turbo
 
 ```bash
 forge validate                    # Validate all .github/ files
-forge validate agents             # Validate only agents
+forge validate ./path/to/dir      # Validate a specific directory
 forge validate --fix              # Validate and auto-fix issues
 forge validate --fix --model claude-opus-4.6  # Fix with a specific model
 ```
