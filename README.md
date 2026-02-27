@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://github.com/jiratouchmhp/agent-forge">
-    <img src="assets/logo-banner.svg" alt="AGENT-FORGE" width="800"/>
+    <img src="assets/Screenshot%202569-02-28%20at%2001.18.44.png" alt="AGENT-FORGE" width="800"/>
   </a>
 </p>
 
@@ -12,6 +12,10 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/@agent-forge-copilot/cli"><img src="https://img.shields.io/npm/v/@agent-forge-copilot/cli?color=orange" alt="npm version"/></a>
   <a href="https://github.com/jiratouchmhp/agent-forge/blob/main/LICENSE"><img src="https://img.shields.io/github/license/jiratouchmhp/agent-forge" alt="license"/></a>
+</p>
+
+<p align="center">
+  <img src="assets/Screenshot%202569-02-28%20at%2001.18.44.png" alt="AGENT-FORGE logo banner" width="1000"/>
 </p>
 
 ---
