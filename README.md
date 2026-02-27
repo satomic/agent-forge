@@ -27,6 +27,24 @@ AGENT-FORGE is a Context Engineering Toolkit that generates GitHub Copilot custo
 
 ---
 
+## Prerequisites
+
+**Required:**
+
+- **Node.js 18+**
+- **VS Code** (or VS Code Insiders) with the GitHub Copilot extension
+- **[GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-in-the-command-line)** — powers the generation pipeline
+
+**Optional:**
+
+- **Git** — version control
+- **GitHub CLI** (`gh`) — needed for agentic workflows
+- **Docker** — needed by some MCP servers
+
+Run `forge check` to verify everything in one step.
+
+---
+
 ## Quick Start
 
 ```bash
@@ -236,24 +254,6 @@ forge init / generate
                                         ▼
                                   Install to .github/
 ```
-
----
-
-## Prerequisites
-
-**Required:**
-
-- **Node.js 18+**
-- **VS Code** (or VS Code Insiders) with the GitHub Copilot extension
-- **[GitHub Copilot CLI](https://docs.github.com/en/copilot/using-github-copilot/using-github-copilot-in-the-command-line)** — powers the generation pipeline
-
-**Optional:**
-
-- **Git** — version control
-- **GitHub CLI** (`gh`) — needed for agentic workflows
-- **Docker** — needed by some MCP servers
-
-Run `forge check` to verify everything in one step.
 
 ---
 
