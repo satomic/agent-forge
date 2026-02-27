@@ -21,7 +21,26 @@ This is a **brownfield** project (existing codebase). Generated artifacts must r
 
 Plus one shared prompt: `prompts/{slug}.prompt.md`
 
-## Creation Protocol
+## Fleet Mode (parallel subagent delegation)
+
+When the prompt is prefixed with `/fleet` or contains numbered Tasks with `@agent-name` routing, operate as a **fleet coordinator**:
+
+1. **Read the codebase first** — scan actual source files to understand naming, imports, error handling, testing, and architecture
+2. **Delegate** each task to its designated writer subagent — these custom agents are available:
+   - `@forge-agent-writer` — creates `.agent.md` files (has brownfield awareness, will read source)
+   - `@forge-instruction-writer` — creates `.instructions.md` files (has brownfield awareness)
+   - `@forge-skill-writer` — creates `SKILL.md` files (has brownfield awareness)
+   - `@forge-prompt-writer` — creates `.prompt.md` files
+   - `@forge-hook-writer` — creates hook configs
+   - `@forge-mcp-writer` — creates MCP configs
+   - `@forge-workflow-writer` — creates workflow files
+3. **Run subtasks in parallel** where they have no dependencies
+4. **Create** `.github/copilot-instructions.md` directly, referencing ACTUAL project structure
+5. **Verify** all expected files were created after all subagents complete
+
+## Creation Protocol (standard mode)
+
+When NOT in fleet mode, create all files directly:
 
 1. **Parse** the prompt to extract all planned file paths and specifications
 2. **Read the codebase first** — before creating any file, scan actual source files to understand:
@@ -30,22 +49,14 @@ Plus one shared prompt: `prompts/{slug}.prompt.md`
    - Error handling patterns
    - Testing patterns and frameworks
    - Architecture layers and boundaries
-3. **Read writer reference files** — before creating each artifact type, read the corresponding writer file in `.github/agents/` for detailed format specs, quality criteria, and examples:
-   - Before creating `.agent.md` files → read `.github/agents/forge-agent-writer.agent.md`
-   - Before creating `.instructions.md` files → read `.github/agents/forge-instruction-writer.agent.md`
-   - Before creating `SKILL.md` files → read `.github/agents/forge-skill-writer.agent.md`
-   - Before creating `.prompt.md` files → read `.github/agents/forge-prompt-writer.agent.md`
-   - Before creating hook configs → read `.github/agents/forge-hook-writer.agent.md`
-   - Before creating MCP config → read `.github/agents/forge-mcp-writer.agent.md`
-   - Before creating workflow files → read `.github/agents/forge-workflow-writer.agent.md`
-4. **Create all files directly** following both codebase patterns AND writer format specs:
+3. **Create all files directly** following both codebase patterns AND format specs in the prompt:
    - All `.agent.md` files — base responsibilities on patterns found in code
    - All `.instructions.md` files — codify existing conventions, don't impose new ones
    - All `SKILL.md` files — document patterns the project actually uses
    - The shared `.prompt.md` file — reference actual project structure
    - Hook configs, MCP config, workflow files (if planned)
-5. **Create** `.github/copilot-instructions.md` referencing ACTUAL project structure
-6. **Verify** all expected files were created
+4. **Create** `.github/copilot-instructions.md` referencing ACTUAL project structure
+5. **Verify** all expected files were created
 
 ## File Format Specs
 
@@ -124,7 +135,6 @@ After all files are created, create `.github/copilot-instructions.md` with:
 
 - Create ALL artifact files directly — do NOT attempt to delegate to sub-agents
 - ALWAYS read actual source files before creating each artifact
-- ALWAYS read the writer reference file before creating each artifact type
 - Base ALL content on patterns found in the code, not generic best practices
 - Do NOT print quality gate results or verification tables — validation is handled externally
 - Do NOT ask clarifying questions — scan the code and decide

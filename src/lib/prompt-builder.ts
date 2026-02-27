@@ -400,8 +400,9 @@ export function buildPlanningPrompt(
 
 /**
  * Build an orchestration prompt from a parsed GenerationPlan.
- * Designed for /fleet execution — each sub-agent task is clearly delineated.
- * Includes reference examples so sub-agents see the exact output format expected.
+ * Used for standard (non-turbo) mode — single session, sequential file creation.
+ * Includes format specs and reference examples inline so the orchestrator has
+ * everything it needs without reading external reference files.
  */
 export function buildOrchestrationPromptFromPlan(
   plan: GenerationPlan,
@@ -485,13 +486,13 @@ export function buildOrchestrationPromptFromPlan(
       ``,
       `### Creation Tasks`,
       ``,
-      `Before creating each artifact type, **read the corresponding writer reference file** in \`.github/agents/\` for detailed format specs, quality criteria, and examples.`,
+      `Create each artifact type following the format specs above.`,
       ``,
-      `**Agent files** — Read \`.github/agents/forge-agent-writer.agent.md\` first, then create ALL agent files listed above.`,
+      `**Agent files** — Create ALL agent files listed above.`,
       `  - Each MUST include: \`argument-hint\`, \`user-invocable: true\`, \`execute\` (or \`run_in_terminal\`) and \`get_errors\` in tools list.`,
       plan.agents.length > 1 ? `  - Add \`handoffs\` between agents so users can transition between them.` : ``,
-      `**Instruction files** — Read \`.github/agents/forge-instruction-writer.agent.md\` first, then create ALL instruction files (one per agent, each with its own applyTo glob).`,
-      `**Skill files** — Read \`.github/agents/forge-skill-writer.agent.md\` first, then create ALL skill files (one per agent). Each skill description MUST have ≥5 USE FOR and ≥3 DO NOT USE FOR trigger phrases.`,
+      `**Instruction files** — Create ALL instruction files (one per agent, each with its own applyTo glob).`,
+      `**Skill files** — Create ALL skill files (one per agent). Each skill description MUST have ≥5 USE FOR and ≥3 DO NOT USE FOR trigger phrases.`,
       ``,
     );
   }
@@ -499,7 +500,7 @@ export function buildOrchestrationPromptFromPlan(
   // Prompt
   if (plan.prompt) {
     sections.push(
-      `**Prompt file** — Read \`.github/agents/forge-prompt-writer.agent.md\` first, then create: \`.github/prompts/${plan.prompt.slug}.prompt.md\``,
+      `**Prompt file** — Create: \`.github/prompts/${plan.prompt.slug}.prompt.md\``,
       `  - Description: "${plan.prompt.description}"`,
       `  - Include \`agent:\` and \`argument-hint:\` in frontmatter.`,
       `  - Route to all agents: ${plan.agents.map((a) => `@${a.title}`).join(", ")}`,
@@ -519,21 +520,21 @@ export function buildOrchestrationPromptFromPlan(
   // Optional hooks/mcp/workflow
   if (plan.hooks) {
     sections.push(
-      `**Hook config** — Read \`.github/agents/forge-hook-writer.agent.md\` first, then create: \`.github/hooks/${plan.hooks.slug}.json\` with companion scripts`,
+      `**Hook config** — Create: \`.github/hooks/${plan.hooks.slug}.json\` with companion scripts`,
       `Events: ${plan.hooks.events.join(", ")}. Purpose: "${plan.hooks.description}"`,
       ``,
     );
   }
   if (plan.mcp) {
     sections.push(
-      `**MCP config** — Read \`.github/agents/forge-mcp-writer.agent.md\` first, then create: \`.vscode/mcp.json\``,
+      `**MCP config** — Create: \`.vscode/mcp.json\``,
       `Servers: ${plan.mcp.servers.join(", ")}. Purpose: "${plan.mcp.description}"`,
       ``,
     );
   }
   if (plan.workflow) {
     sections.push(
-      `**Workflow file** — Read \`.github/agents/forge-workflow-writer.agent.md\` first, then create: \`.github/workflows/${plan.workflow.slug}.md\``,
+      `**Workflow file** — Create: \`.github/workflows/${plan.workflow.slug}.md\``,
       `Trigger: ${plan.workflow.trigger}. Purpose: "${plan.workflow.description}"`,
       ``,
     );
@@ -551,7 +552,284 @@ export function buildOrchestrationPromptFromPlan(
   return sections.join("\n");
 }
 
-// ─── Per-Writer Prompt Builders (Turbo mode) ───
+// ─── Fleet Orchestration Prompt Builder (Turbo mode) ───
+
+/**
+ * Build a fleet orchestration prompt from a parsed GenerationPlan.
+ * Designed for /fleet execution — the prompt is structured as independent subtasks,
+ * each routed to a specialized writer subagent via @agent-name.
+ * /fleet breaks these into parallel subagent processes, each with its own context window.
+ */
+export function buildFleetOrchestrationPrompt(
+  plan: GenerationPlan,
+  mode: GenerationMode,
+): string {
+  const refs = loadReferenceExamples();
+  const sections: string[] = [];
+
+  // ── Shared Plan Overview (visible to orchestrator + all subagents) ──
+  sections.push(
+    `# Artifact Generation Plan`,
+    ``,
+    `Generate VS Code-compatible Copilot customization files using specialized writer subagents.`,
+    `Each task below should be delegated to its designated @agent in parallel.`,
+    ``,
+    `## Use Case`,
+    `"${plan.description}"`,
+    ``,
+    `## Generation Mode: ${mode}`,
+    ``,
+  );
+
+  // Full plan overview so all subagents share consistent naming/references
+  if (plan.agents.length > 0) {
+    const agentTable = plan.agents.map((a: PlannedAgent) => {
+      const tech = a.techStack.length > 0 ? a.techStack.join(", ") : "general";
+      return `| ${a.name} | ${a.title} | ${a.role} | ${tech} | \`${a.applyToGlob}\` |`;
+    }).join("\n");
+
+    sections.push(
+      `## Plan Overview (all agents)`,
+      ``,
+      `| Name | Title | Role | Tech Stack | ApplyTo |`,
+      `|------|-------|------|------------|---------|`,
+      agentTable,
+      ``,
+    );
+
+    if (plan.prompt) {
+      sections.push(`**Shared Prompt**: \`.github/prompts/${plan.prompt.slug}.prompt.md\` — "${plan.prompt.description}"`, ``);
+    }
+    if (plan.hooks) {
+      sections.push(`**Hooks**: \`.github/hooks/${plan.hooks.slug}.json\` — events: ${plan.hooks.events.join(", ")}`, ``);
+    }
+    if (plan.mcp) {
+      sections.push(`**MCP**: \`.vscode/mcp.json\` — servers: ${plan.mcp.servers.join(", ")}`, ``);
+    }
+    if (plan.workflow) {
+      sections.push(`**Workflow**: \`.github/workflows/${plan.workflow.slug}.md\` — trigger: ${plan.workflow.trigger}`, ``);
+    }
+  }
+
+  // ── Task 1: Agent Files ──
+  if (plan.agents.length > 0) {
+    sections.push(
+      `---`,
+      `## Task 1: Create Agent Files`,
+      `Use @forge-agent-writer to create all agent files.`,
+      ``,
+      VSCODE_AGENT_SPEC,
+      ``,
+    );
+
+    if (refs) {
+      sections.push(
+        `### Reference Example (match this format)`,
+        "```markdown",
+        refs.agent.slice(0, 1500),
+        "```",
+        ``,
+      );
+    }
+
+    for (const a of plan.agents) {
+      const tech = a.techStack.length > 0 ? ` (${a.techStack.join(", ")})` : "";
+      const resp = a.responsibilities.map((r: string) => `    - ${r}`).join("\n");
+      sections.push(
+        `### Agent: ${a.title}`,
+        `- File: \`.github/agents/${a.name}.agent.md\``,
+        `- Name: "${a.title}"`,
+        `- Role: "${a.role}"${tech}`,
+        `- Category: ${a.category}`,
+        `- ApplyTo: ${a.applyToGlob}`,
+        `- Responsibilities:`,
+        resp,
+        `- Tools: read, edit, search, execute, get_errors, todo`,
+        `- MUST include: \`argument-hint\`, \`user-invocable: true\``,
+        plan.agents.length > 1
+          ? `- Handoffs: add handoffs to other agents: ${plan.agents.filter((o) => o.name !== a.name).map((o) => o.title).join(", ")}`
+          : ``,
+        ``,
+      );
+    }
+
+    // ── Task 2: Instruction Files ──
+    sections.push(
+      `---`,
+      `## Task 2: Create Instruction Files`,
+      `Use @forge-instruction-writer to create all instruction files.`,
+      ``,
+      VSCODE_INSTRUCTION_SPEC,
+      ``,
+    );
+
+    if (refs) {
+      sections.push(
+        `### Reference Example`,
+        "```markdown",
+        refs.instruction,
+        "```",
+        ``,
+      );
+    }
+
+    for (const a of plan.agents) {
+      sections.push(
+        `### Instruction: ${a.title}`,
+        `- File: \`.github/instructions/${a.name}.instructions.md\``,
+        `- ApplyTo: "${a.applyToGlob}"`,
+        `- Description: "${a.instruction.description}"`,
+        `- Domain: ${a.category}, tech: ${a.techStack.join(", ") || "general"}`,
+        ``,
+      );
+    }
+
+    // ── Task 3: Skill Files ──
+    sections.push(
+      `---`,
+      `## Task 3: Create Skill Files`,
+      `Use @forge-skill-writer to create all skill files.`,
+      ``,
+      VSCODE_SKILL_SPEC,
+      ``,
+    );
+
+    if (refs) {
+      sections.push(
+        `### Reference Example`,
+        "```markdown",
+        refs.skill,
+        "```",
+        ``,
+      );
+    }
+
+    for (const a of plan.agents) {
+      sections.push(
+        `### Skill: ${a.title}`,
+        `- File: \`.github/skills/${a.name}/SKILL.md\``,
+        `- Name: "${a.name}"`,
+        `- Description: "${a.skill.description}"`,
+        `- MUST include ≥5 USE FOR and ≥3 DO NOT USE FOR trigger phrases in description.`,
+        ``,
+      );
+    }
+  }
+
+  // ── Task 4: Prompt File ──
+  if (plan.prompt) {
+    sections.push(
+      `---`,
+      `## Task 4: Create Prompt File`,
+      `Use @forge-prompt-writer to create the prompt file.`,
+      ``,
+      VSCODE_PROMPT_SPEC,
+      ``,
+    );
+
+    if (refs) {
+      sections.push(
+        `### Reference Example`,
+        "```markdown",
+        refs.prompt,
+        "```",
+        ``,
+      );
+    }
+
+    sections.push(
+      `### Prompt`,
+      `- File: \`.github/prompts/${plan.prompt.slug}.prompt.md\``,
+      `- Description: "${plan.prompt.description}"`,
+      `- Include \`agent:\` and \`argument-hint:\` in frontmatter.`,
+      `- Route to all agents: ${plan.agents.map((a) => `@${a.title}`).join(", ")}`,
+      ``,
+    );
+  }
+
+  // ── Task 5: Global Instructions ──
+  const agentList = plan.agents.map((a: PlannedAgent) =>
+    `- **${a.title}** (\`.github/agents/${a.name}.agent.md\`) — ${a.role}`
+  ).join("\n");
+
+  sections.push(
+    `---`,
+    `## Task 5: Create Global Instructions`,
+    `Create this file directly (no subagent needed).`,
+    ``,
+    `### File: \`.github/copilot-instructions.md\``,
+    `- Brief project overview`,
+    `- Tech stack summary`,
+    `- Architecture overview (one line per layer)`,
+    `- Agent reference:`,
+    agentList,
+    `- Key conventions (3-5 rules)`,
+    `- Keep under 50 lines`,
+    `- Do NOT duplicate per-agent instruction content`,
+    ``,
+  );
+
+  // ── Optional Tasks: Hooks / MCP / Workflow ──
+  let taskNum = 6;
+  if (plan.hooks) {
+    sections.push(
+      `---`,
+      `## Task ${taskNum}: Create Hook Configuration`,
+      `Use @forge-hook-writer to create hook config and companion scripts.`,
+      ``,
+      `- File: \`.github/hooks/${plan.hooks.slug}.json\``,
+      `- Events: ${plan.hooks.events.join(", ")}`,
+      `- Purpose: "${plan.hooks.description}"`,
+      `- Use case: "${plan.description}"`,
+      ``,
+    );
+    taskNum++;
+  }
+  if (plan.mcp) {
+    sections.push(
+      `---`,
+      `## Task ${taskNum}: Create MCP Configuration`,
+      `Use @forge-mcp-writer to create MCP server config.`,
+      ``,
+      `- File: \`.vscode/mcp.json\``,
+      `- Servers: ${plan.mcp.servers.join(", ")}`,
+      `- Purpose: "${plan.mcp.description}"`,
+      `- Use case: "${plan.description}"`,
+      ``,
+    );
+    taskNum++;
+  }
+  if (plan.workflow) {
+    sections.push(
+      `---`,
+      `## Task ${taskNum}: Create Agentic Workflow`,
+      `Use @forge-workflow-writer to create the workflow file.`,
+      ``,
+      `- File: \`.github/workflows/${plan.workflow.slug}.md\``,
+      `- Trigger: ${plan.workflow.trigger}`,
+      `- Purpose: "${plan.workflow.description}"`,
+      `- Use case: "${plan.description}"`,
+      ``,
+    );
+  }
+
+  // ── Execution Rules ──
+  sections.push(
+    `---`,
+    `## Execution Rules`,
+    `- Delegate each numbered Task to its designated @agent subagent.`,
+    `- Tasks are independent — run them in parallel where possible.`,
+    `- Each subagent creates ONLY the files listed in its task.`,
+    `- Content must be specific to the use case — NO generic placeholders.`,
+    `- Use the EXACT file paths, names, roles, and responsibilities from the Plan Overview.`,
+    `- Do NOT ask clarifying questions — make decisions based on the plan.`,
+    `- Stop after all tasks are complete. Do NOT run validation or review.`,
+  );
+
+  return sections.join("\n");
+}
+
+// ─── Per-Writer Prompt Builders (legacy — kept for external parallel use) ───
 
 /** Writer agent types that can be targeted individually */
 export type WriterAgent =

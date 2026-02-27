@@ -1,4 +1,4 @@
-import { select, checkbox, input } from "@inquirer/prompts";
+import { select, checkbox, input, confirm } from "@inquirer/prompts";
 import chalk from "chalk";
 import ora from "ora";
 import path from "path";
@@ -15,21 +15,27 @@ import {
 import { getGallery } from "../lib/gallery.js";
 import { detectWorkspace } from "../lib/detector.js";
 import {
-  isCopilotCliInstalled,
   launchCopilotCli,
-  launchCopilotCliParallel,
   selectModel,
   getModelMultiplier,
-  WRITER_LABELS,
   formatDuration,
+  formatTokens,
+  aggregateCliOutputs,
 } from "../lib/copilot-cli.js";
+import type { CliOutput } from "../lib/copilot-cli.js";
 import {
   buildPlanningPrompt,
   buildOrchestrationPromptFromPlan,
-  buildWriterPrompts,
-  buildCopilotInstructionsPrompt,
+  buildFleetOrchestrationPrompt,
 } from "../lib/prompt-builder.js";
 import { postGenerationValidateAndFix } from "../lib/validator.js";
+import {
+  checkPrerequisites,
+  formatPrerequisiteResults,
+  hasBlockingFailures,
+  hasWarnings,
+  printMissingInstallGuide,
+} from "../lib/prerequisites.js";
 import type { InitOptions, InitMode, AnalyzeStrategy, GenerationMode, SpeedStrategy, WorkspaceInfo } from "../types.js";
 
 // ── Side-by-side AGENT-FORGE block art (6 rows) ───────────────────────
@@ -124,8 +130,20 @@ export async function animateLogo(): Promise<void> {
 
 const ACCENT = "#FF8C00";
 const ACCENT2 = "#FF6A00";
+const DIM_BORDER = "#555555";
 
-/** Print a section header with consistent styling */
+/** Strip ANSI escape codes to get visual length */
+function stripAnsi(str: string): string {
+  return str.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
+/** Pad a string to a visual width, accounting for ANSI escape codes */
+function vpad(str: string, width: number): string {
+  const visual = stripAnsi(str).length;
+  return str + " ".repeat(Math.max(0, width - visual));
+}
+
+/** Print a section header with accent line */
 function sectionHeader(label: string, width = 58): void {
   const line = "─".repeat(Math.max(0, width - label.length - 5));
   console.log();
@@ -135,7 +153,7 @@ function sectionHeader(label: string, width = 58): void {
 
 /** Print a key-value detail line inside a section */
 function detail(key: string, value: string): void {
-  console.log(chalk.dim(`  │ ${key.padEnd(10)} ${value}`));
+  console.log(chalk.hex(DIM_BORDER)("  │ ") + chalk.hex(ACCENT)(key.padEnd(10)) + chalk.white(value));
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -146,6 +164,49 @@ export async function initCommand(
   options: InitOptions,
 ): Promise<void> {
   await animateLogo();
+
+  // ── Prerequisite check ───────────────────────────────────────────────
+  if (!options.skipCheck) {
+    const isTemplatesOnly = options.mode === "templates";
+    const results = checkPrerequisites();
+
+    // For --mode templates, relax the Copilot CLI requirement
+    const effectiveResults = isTemplatesOnly
+      ? results.map((r) =>
+          r.name === "GitHub Copilot CLI" ? { ...r, category: "optional" as const } : r,
+        )
+      : results;
+
+    console.log(chalk.bold("  Checking prerequisites...\n"));
+    formatPrerequisiteResults(effectiveResults);
+    console.log();
+
+    if (hasBlockingFailures(effectiveResults)) {
+      console.log(chalk.red.bold("  ✗ Missing required tools — install them before continuing."));
+      printMissingInstallGuide(effectiveResults);
+      console.log();
+      console.log(chalk.dim("  Tip: run ") + chalk.cyan("forge check") + chalk.dim(" to re-verify after installing."));
+      console.log();
+      process.exit(1);
+    }
+
+    if (hasWarnings(effectiveResults)) {
+      printMissingInstallGuide(effectiveResults);
+      console.log();
+      const proceed = await confirm({
+        message: "Some recommended tools are missing. Continue anyway?",
+        default: true,
+      });
+      if (!proceed) {
+        console.log(chalk.dim("\n  Aborted. Install the missing tools and re-run forge init.\n"));
+        process.exit(0);
+      }
+    } else {
+      console.log(chalk.green.bold("  ✓ All prerequisites met"));
+    }
+
+    console.log();
+  }
 
   const mode: InitMode = options.mode ?? await select({
     message: "What would you like to do?",
@@ -203,9 +264,9 @@ async function handleCreate(options: InitOptions): Promise<void> {
   await runGeneration(targetDir, description, "full", options, undefined, "greenfield");
 
   console.log();
-  console.log(chalk.bold("  Get started:"));
-  console.log(`    ${chalk.cyan(`cd ${folderName}`)}`);
-  console.log(`    Open Copilot Chat: ${chalk.dim("⌘⇧I / Ctrl+Shift+I")}`);
+  console.log(`  ${chalk.hex(ACCENT).bold("Get started")}`);
+  console.log(`    ${chalk.hex(ACCENT)("1.")} ${chalk.cyan(`cd ${folderName}`)}`);
+  console.log(`    ${chalk.hex(ACCENT)("2.")} Open Copilot Chat ${chalk.dim("⌘⇧I / Ctrl+Shift+I")}`);
   console.log();
 }
 
@@ -379,19 +440,6 @@ async function runGeneration(
   workspace?: WorkspaceInfo,
   pipeline: "greenfield" | "brownfield" = "greenfield",
 ): Promise<void> {
-  // Copilot CLI is required
-  if (!isCopilotCliInstalled()) {
-    console.log(chalk.red("  ✗ GitHub Copilot CLI is required for generation."));
-    console.log();
-    console.log(chalk.bold("  Install Copilot CLI:"));
-    console.log(chalk.cyan("    npm install -g @github/copilot"));
-    console.log();
-    console.log(chalk.dim("  Then re-run: forge init"));
-    console.log();
-    console.log(chalk.dim("  Templates work without Copilot CLI — run: forge init --mode templates"));
-    return;
-  }
-
   // Model selection
   const model = options.model ?? await selectModel();
 
@@ -406,7 +454,7 @@ async function runGeneration(
       },
       {
         value: "turbo" as SpeedStrategy,
-        name: `${chalk.hex("#FFD700")("Turbo")}     ${chalk.dim("— Parallel generation, faster")} ${chalk.hex("#FFD700")("⚡")}`,
+        name: `${chalk.hex("#FFD700")("Turbo")}     ${chalk.dim("— Fleet mode, parallel subagents, faster")} ${chalk.hex("#FFD700")("⚡")}`,
       },
     ],
     default: "standard",
@@ -432,14 +480,13 @@ async function runGeneration(
   console.log();
 
   const planPrompt = buildPlanningPrompt(generationMode, slug, title, description, domains, workspace);
-  const planExitCode = await launchCopilotCli(tempDir, planPrompt, {
+  const planOutput = await launchCopilotCli(tempDir, planPrompt, {
     model,
     agent: plannerAgent,
     maxContinues: 15,
-    plan: true,
   });
 
-  if (planExitCode !== 0) {
+  if (planOutput.exitCode !== 0) {
     console.log(chalk.yellow("\n  ⚠  Planner exited with warnings."));
   }
 
@@ -449,8 +496,6 @@ async function runGeneration(
 
   await prepareWorkspaceForPlan(tempDir, plan);
 
-  const totalPru = (speed === "turbo" ? plan.agents.length + 2 : 2) * multiplier;
-
   // ── Phase 2: Generating ────────────────────────────────────────────
   const speedLabel = speed === "turbo" ? "Turbo ⚡" : "Standard";
   sectionHeader(`Phase 2 · Generating (${speedLabel})`);
@@ -458,56 +503,36 @@ async function runGeneration(
   let exitCode: number;
   const phase2Start = Date.now();
   let writerDurationMs = 0;
-  let instrDurationMs = 0;
+  /** Collect all CliOutputs for accurate PRU tracking */
+  const phaseOutputs: { planning: CliOutput; writers: CliOutput[]; instructions?: CliOutput; orchestrator?: CliOutput } = {
+    planning: planOutput,
+    writers: [],
+  };
 
   if (speed === "turbo") {
-    const writerTasks = buildWriterPrompts(plan, generationMode);
-    detail("Writers", `${writerTasks.length} parallel sessions`);
-    detail("Estimate", `~${(writerTasks.length + 1) * multiplier} PRU`);
+    // Turbo: single session with /fleet — Copilot CLI delegates to writer subagents in parallel
+    const fleetPrompt = buildFleetOrchestrationPrompt(plan, generationMode);
+
+    detail("Mode", "Fleet (parallel subagents)");
     console.log();
 
-    for (const task of writerTasks) {
-      const label = WRITER_LABELS[task.agent] ?? task.agent;
-      console.log(chalk.dim(`    ◦ ${label}`));
-    }
-    console.log();
-
-    const result = await launchCopilotCliParallel(tempDir, writerTasks, { model }, (wr) => {
-      const label = (WRITER_LABELS[wr.agent] ?? wr.agent).padEnd(22);
-      const duration = chalk.dim(formatDuration(wr.durationMs));
-      if (wr.exitCode === 0) {
-        console.log(`    ${chalk.green("✔")} ${label} ${duration}`);
-      } else {
-        console.log(`    ${chalk.red("✘")} ${label} ${duration}`);
-      }
-    });
-    writerDurationMs = result.totalDurationMs;
-
-    console.log();
-    const instrStart = Date.now();
-    const instrSpinner = ora("  Creating copilot-instructions.md...").start();
-    const instrPrompt = buildCopilotInstructionsPrompt(plan);
-    const instrCode = await launchCopilotCli(tempDir, instrPrompt, {
+    const fleetOutput = await launchCopilotCli(tempDir, fleetPrompt, {
       model,
       agent: orchestratorAgent,
-      maxContinues: 5,
-      quiet: true,
+      maxContinues: 25,
+      fleet: true,
     });
-    instrDurationMs = Date.now() - instrStart;
-    if (instrCode === 0) {
-      instrSpinner.succeed(`  copilot-instructions.md ${chalk.dim(formatDuration(instrDurationMs))}`);
-    } else {
-      instrSpinner.warn(`  copilot-instructions.md (with warnings) ${chalk.dim(formatDuration(instrDurationMs))}`);
-    }
-
-    exitCode = result.failed > 0 ? 1 : 0;
+    writerDurationMs = fleetOutput.sessionTimeMs || 0;
+    phaseOutputs.orchestrator = fleetOutput;
+    exitCode = fleetOutput.exitCode;
   } else {
     detail("Session", "single orchestrator");
-    detail("Estimate", `~${2 * multiplier} PRU`);
     console.log();
 
     const orchPrompt = buildOrchestrationPromptFromPlan(plan, generationMode);
-    exitCode = await launchCopilotCli(tempDir, orchPrompt, { model, agent: orchestratorAgent });
+    const orchOutput = await launchCopilotCli(tempDir, orchPrompt, { model, agent: orchestratorAgent });
+    phaseOutputs.orchestrator = orchOutput;
+    exitCode = orchOutput.exitCode;
   }
 
   const phase2Duration = Date.now() - phase2Start;
@@ -543,18 +568,60 @@ async function runGeneration(
   sectionHeader("Results");
 
   if (exitCode === 0) {
-    const durationStr = formatDuration(phase2Duration);
-    console.log(`  ${chalk.green.bold("✓")} Generation complete`);
+    console.log(`  ${chalk.green.bold("✓")} ${chalk.white.bold("Generation complete")}`);
     console.log();
 
-    const boxWidth = 45;
-    console.log(chalk.dim(`  ┌${"─".repeat(boxWidth)}┐`));
-    console.log(chalk.dim("  │") + `  Files:     ${chalk.bold(String(installed.length))}`.padEnd(boxWidth) + chalk.dim("│"));
-    console.log(chalk.dim("  │") + `  Duration:  ${chalk.bold(durationStr)}${speed === "turbo" ? chalk.dim(` (writers ${formatDuration(writerDurationMs)})`) : ""}`.padEnd(boxWidth) + chalk.dim("│"));
-    console.log(chalk.dim("  │") + `  Cost:      ${chalk.bold(`~${totalPru} PRU`)}`.padEnd(boxWidth) + chalk.dim("│"));
-    console.log(chalk.dim("  │") + `  Model:     ${chalk.bold(model)}`.padEnd(boxWidth) + chalk.dim("│"));
-    console.log(chalk.dim("  │") + `  Speed:     ${chalk.bold(speed === "turbo" ? "Turbo (parallel)" : "Standard")}`.padEnd(boxWidth) + chalk.dim("│"));
-    console.log(chalk.dim(`  └${"─".repeat(boxWidth)}┘`));
+    // Aggregate real PRU from all phases
+    const allOutputs: CliOutput[] = [planOutput, ...phaseOutputs.writers];
+    if (phaseOutputs.instructions) allOutputs.push(phaseOutputs.instructions);
+    if (phaseOutputs.orchestrator) allOutputs.push(phaseOutputs.orchestrator);
+    const totalOutput = aggregateCliOutputs(allOutputs);
+
+    const totalPru = totalOutput.premiumRequests;
+    const estimatedPru = (speed === "turbo" ? plan.agents.length + 1 : 2) * multiplier;
+    const pruLabel = totalPru > 0 ? `${totalPru} PRU` : `~${estimatedPru} PRU`;
+
+    // Per-phase breakdown table
+    const boxWidth = 57;
+    const divider = "─".repeat(boxWidth);
+    const bc = chalk.hex(DIM_BORDER);
+    console.log(bc(`  ┌${divider}┐`));
+    console.log(bc("  │") + chalk.hex(ACCENT).bold("  Phase".padEnd(18) + "Duration".padEnd(12) + "PRU".padEnd(8) + "Tokens".padEnd(19)) + bc("│"));
+    console.log(bc(`  ├${divider}┤`));
+
+    // Planning row
+    const planDurStr = planOutput.apiTimeMs > 0 ? formatDuration(planOutput.apiTimeMs) : formatDuration(planOutput.sessionTimeMs || 0);
+    const planPru = planOutput.premiumRequests > 0 ? chalk.white(String(planOutput.premiumRequests)) : chalk.dim("–");
+    const planTokens = formatTokens(planOutput.tokenBreakdown) || chalk.dim("–");
+    console.log(bc("  │") + `  ${vpad(chalk.white("Planning"), 16)}${vpad(chalk.cyan(planDurStr), 12)}${vpad(String(planPru), 8)}${vpad(String(planTokens), 19)}` + bc("│"));
+
+    if (speed === "turbo") {
+      if (phaseOutputs.orchestrator) {
+        const oOut = phaseOutputs.orchestrator;
+        const oDur = oOut.apiTimeMs > 0 ? formatDuration(oOut.apiTimeMs) : formatDuration(phase2Duration);
+        const oPru = oOut.premiumRequests > 0 ? chalk.white(String(oOut.premiumRequests)) : chalk.dim("–");
+        const oTokens = formatTokens(oOut.tokenBreakdown) || chalk.dim("–");
+        console.log(bc("  │") + `  ${vpad(chalk.hex("#FFD700")("Fleet ⚡"), 16)}${vpad(chalk.cyan(oDur), 12)}${vpad(String(oPru), 8)}${vpad(String(oTokens), 19)}` + bc("│"));
+      }
+    } else {
+      if (phaseOutputs.orchestrator) {
+        const oOut = phaseOutputs.orchestrator;
+        const oDur = oOut.apiTimeMs > 0 ? formatDuration(oOut.apiTimeMs) : formatDuration(phase2Duration);
+        const oPru = oOut.premiumRequests > 0 ? chalk.white(String(oOut.premiumRequests)) : chalk.dim("–");
+        const oTokens = formatTokens(oOut.tokenBreakdown) || chalk.dim("–");
+        console.log(bc("  │") + `  ${vpad(chalk.white("Generation"), 16)}${vpad(chalk.cyan(oDur), 12)}${vpad(String(oPru), 8)}${vpad(String(oTokens), 19)}` + bc("│"));
+      }
+    }
+
+    // Total row
+    const totalDurStr = formatDuration(phase2Duration);
+    const totalTokenStr = formatTokens(totalOutput.tokenBreakdown) || chalk.dim("–");
+    console.log(bc(`  ├${divider}┤`));
+    console.log(bc("  │") + `  ${vpad(chalk.white.bold("Total"), 16)}${vpad(chalk.cyan.bold(totalDurStr), 12)}${vpad(chalk.hex("#FFD700").bold(pruLabel), 8)}${vpad(String(totalTokenStr), 19)}` + bc("│"));
+    console.log(bc(`  │${" ".repeat(boxWidth)}│`));
+    console.log(bc("  │") + `  ${vpad(`${chalk.dim("Files")} ${chalk.white.bold(String(installed.length))}`, 23)}${vpad(`${chalk.dim("Model")} ${chalk.white.bold(model)}`, 32)}` + bc("│"));
+    console.log(bc("  │") + `  ${vpad(`${chalk.dim("Speed")} ${chalk.white.bold(speed === "turbo" ? "Turbo (fleet)" : "Standard")}`, 55)}` + bc("│"));
+    console.log(bc(`  └${divider}┘`));
 
     printGeneratedFiles(plan.slug, installed);
   } else {
@@ -599,6 +666,7 @@ function buildDiscoveryDescription(workspace: WorkspaceInfo): string {
 function printGeneratedFiles(_slug: string, files: string[]): void {
   const githubFiles = files.filter((f) => !f.startsWith(".vscode/"));
   const vscodeFiles = files.filter((f) => f.startsWith(".vscode/"));
+  const tc = chalk.hex(DIM_BORDER); // tree connector color
 
   if (githubFiles.length > 0) {
     const groups = new Map<string, string[]>();
@@ -611,7 +679,7 @@ function printGeneratedFiles(_slug: string, files: string[]): void {
     }
 
     console.log();
-    console.log(chalk.bold("  .github/"));
+    console.log(`  ${chalk.hex(ACCENT).bold(".github/")}`);
     const dirs = [...groups.keys()];
     for (let d = 0; d < dirs.length; d++) {
       const dir = dirs[d];
@@ -621,15 +689,15 @@ function printGeneratedFiles(_slug: string, files: string[]): void {
       const childIndent = isLastDir ? "    " : "│   ";
 
       if (dir) {
-        console.log(`    ${dirPrefix}${chalk.bold(dir + "/")}`);
+        console.log(tc(`    ${dirPrefix}`) + chalk.hex(ACCENT).bold(dir + "/"));
         for (let i = 0; i < dirFiles.length; i++) {
           const filePrefix = i === dirFiles.length - 1 ? "└── " : "├── ";
-          console.log(`    ${childIndent}${filePrefix}${dirFiles[i]}`);
+          console.log(tc(`    ${childIndent}${filePrefix}`) + chalk.white(dirFiles[i]));
         }
       } else {
         for (let i = 0; i < dirFiles.length; i++) {
           const filePrefix = (isLastDir && i === dirFiles.length - 1) ? "└── " : "├── ";
-          console.log(`    ${filePrefix}${dirFiles[i]}`);
+          console.log(tc(`    ${filePrefix}`) + chalk.white(dirFiles[i]));
         }
       }
     }
@@ -637,19 +705,19 @@ function printGeneratedFiles(_slug: string, files: string[]): void {
 
   if (vscodeFiles.length > 0) {
     console.log();
-    console.log(chalk.bold("  .vscode/"));
+    console.log(`  ${chalk.hex(ACCENT).bold(".vscode/")}`);
     for (let i = 0; i < vscodeFiles.length; i++) {
       const name = vscodeFiles[i].replace(".vscode/", "");
       const prefix = i === vscodeFiles.length - 1 ? "└── " : "├── ";
-      console.log(`    ${prefix}${name}`);
+      console.log(tc(`    ${prefix}`) + chalk.white(name));
     }
   }
 }
 
 function printNextSteps(): void {
   console.log();
-  console.log(chalk.bold("  Next steps:"));
-  console.log(`    1. Open Copilot Chat: ${chalk.dim("⌘⇧I / Ctrl+Shift+I")}`);
-  console.log(`    2. Try your new agent or prompt`);
+  console.log(`  ${chalk.hex(ACCENT).bold("Next steps")}`);
+  console.log(`    ${chalk.hex(ACCENT)("1.")} Open Copilot Chat ${chalk.dim("⌘⇧I / Ctrl+Shift+I")}`);
+  console.log(`    ${chalk.hex(ACCENT)("2.")} Try your new agent or prompt`);
   console.log();
 }

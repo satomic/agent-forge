@@ -55,7 +55,6 @@ export function isCopilotCliInstalled(): boolean {
       encoding: "utf-8",
       timeout: 5000,
       stdio: ["pipe", "pipe", "pipe"],
-      shell: true,
     });
     _copilotCliInstalled = true;
   } catch {
@@ -73,7 +72,6 @@ export function getCopilotCliVersion(): string | null {
       encoding: "utf-8",
       timeout: 5000,
       stdio: ["pipe", "pipe", "pipe"],
-      shell: true,
     }).trim();
     const match = output.match(/(\d+\.\d+[\d.]*)/);
     return match ? match[1] : output.slice(0, 30);
@@ -123,6 +121,137 @@ export async function selectModel(): Promise<string> {
   });
 }
 
+// ─── CLI Output Parsing ─────────────────────────────────────────────
+
+/** Token usage breakdown for a single model */
+export interface TokenBreakdown {
+  model: string;
+  tokensIn: string;
+  tokensOut: string;
+  tokensCached: string;
+  estimatedPru: number;
+}
+
+/** Parsed output from a Copilot CLI session */
+export interface CliOutput {
+  exitCode: number;
+  /** Total premium requests consumed (parsed from CLI output, 0 if unparseable) */
+  premiumRequests: number;
+  /** API time in milliseconds (parsed from CLI output, 0 if unparseable) */
+  apiTimeMs: number;
+  /** Total session time in milliseconds (parsed from CLI output, 0 if unparseable) */
+  sessionTimeMs: number;
+  /** Lines added / removed */
+  codeChanges: { added: number; removed: number };
+  /** Per-model token breakdown */
+  tokenBreakdown: TokenBreakdown[];
+  /** Raw stdout (available only when captured) */
+  rawOutput: string;
+}
+
+/** Parse duration strings like "2m 12s", "45s", "1m" into milliseconds */
+function parseDurationToMs(str: string): number {
+  const minMatch = str.match(/(\d+)m/);
+  const secMatch = str.match(/(\d+)s/);
+  const mins = minMatch ? parseInt(minMatch[1], 10) : 0;
+  const secs = secMatch ? parseInt(secMatch[1], 10) : 0;
+  return (mins * 60 + secs) * 1000;
+}
+
+/**
+ * Parse Copilot CLI stdout for usage statistics.
+ * Gracefully returns zeroed output if format is unrecognized.
+ */
+export function parseCopilotOutput(stdout: string, exitCode: number): CliOutput {
+  const result: CliOutput = {
+    exitCode,
+    premiumRequests: 0,
+    apiTimeMs: 0,
+    sessionTimeMs: 0,
+    codeChanges: { added: 0, removed: 0 },
+    tokenBreakdown: [],
+    rawOutput: stdout,
+  };
+
+  // Total usage est:        1 Premium request(s)
+  const pruMatch = stdout.match(/Total usage est:\s+(\d+)\s+Premium request/i);
+  if (pruMatch) result.premiumRequests = parseInt(pruMatch[1], 10);
+
+  // API time spent:         2m 12s
+  const apiTimeMatch = stdout.match(/API time spent:\s+(\S[\dm s]+)/i);
+  if (apiTimeMatch) result.apiTimeMs = parseDurationToMs(apiTimeMatch[1].trim());
+
+  // Total session time:     2m 17s
+  const sessionTimeMatch = stdout.match(/Total session time:\s+(\S[\dm s]+)/i);
+  if (sessionTimeMatch) result.sessionTimeMs = parseDurationToMs(sessionTimeMatch[1].trim());
+
+  // Total code changes:     +77 -0
+  const codeMatch = stdout.match(/Total code changes:\s+\+(\d+)\s+-(\d+)/i);
+  if (codeMatch) {
+    result.codeChanges.added = parseInt(codeMatch[1], 10);
+    result.codeChanges.removed = parseInt(codeMatch[2], 10);
+  }
+
+  // Per-model token breakdown:
+  //  claude-sonnet-4.6       193.0k in, 5.0k out, 127.9k cached (Est. 1 Premium request)
+  const tokenRegex = /^\s*(\S+)\s+([\d.]+k?)\s+in,\s+([\d.]+k?)\s+out,\s+([\d.]+k?)\s+cached\s+\(Est\.\s+(\d+)\s+Premium/gm;
+  let tokenMatch;
+  while ((tokenMatch = tokenRegex.exec(stdout)) !== null) {
+    result.tokenBreakdown.push({
+      model: tokenMatch[1],
+      tokensIn: tokenMatch[2],
+      tokensOut: tokenMatch[3],
+      tokensCached: tokenMatch[4],
+      estimatedPru: parseInt(tokenMatch[5], 10),
+    });
+  }
+
+  // If per-model breakdown found but no total PRU parsed, sum from breakdowns
+  if (result.premiumRequests === 0 && result.tokenBreakdown.length > 0) {
+    result.premiumRequests = result.tokenBreakdown.reduce((sum, t) => sum + t.estimatedPru, 0);
+  }
+
+  return result;
+}
+
+/** Create a zeroed CliOutput (used as fallback when stdout is not captured) */
+export function emptyCliOutput(exitCode: number): CliOutput {
+  return {
+    exitCode,
+    premiumRequests: 0,
+    apiTimeMs: 0,
+    sessionTimeMs: 0,
+    codeChanges: { added: 0, removed: 0 },
+    tokenBreakdown: [],
+    rawOutput: "",
+  };
+}
+
+/** Aggregate multiple CliOutput objects into combined totals */
+export function aggregateCliOutputs(outputs: CliOutput[]): CliOutput {
+  const combined = emptyCliOutput(outputs.some(o => o.exitCode !== 0) ? 1 : 0);
+  for (const o of outputs) {
+    combined.premiumRequests += o.premiumRequests;
+    combined.apiTimeMs += o.apiTimeMs;
+    combined.codeChanges.added += o.codeChanges.added;
+    combined.codeChanges.removed += o.codeChanges.removed;
+    combined.tokenBreakdown.push(...o.tokenBreakdown);
+  }
+  return combined;
+}
+
+/** Format token stats compactly: "193k in / 5k out" */
+export function formatTokens(breakdown: TokenBreakdown[]): string {
+  if (breakdown.length === 0) return "";
+  const totalIn = breakdown.map(b => b.tokensIn).join("+");
+  const totalOut = breakdown.map(b => b.tokensOut).join("+");
+  // If single model, show clean values
+  if (breakdown.length === 1) {
+    return `${breakdown[0].tokensIn} in / ${breakdown[0].tokensOut} out`;
+  }
+  return `${totalIn} in / ${totalOut} out`;
+}
+
 /** Options for launching Copilot CLI */
 export interface LaunchOptions {
   model?: string;
@@ -130,25 +259,21 @@ export interface LaunchOptions {
   maxContinues?: number;
   /** Suppress terminal output (pipe instead of inherit stdio) */
   quiet?: boolean;
-  /** @deprecated The --plan flag is not supported by Copilot CLI. Planning is handled via prompt content. */
-  plan?: boolean;
+  /** Use /fleet mode — Copilot CLI breaks the prompt into parallel subtasks delegated to subagents */
+  fleet?: boolean;
 }
 
 /**
  * Launch the Copilot CLI with a prompt routed to a specific agent.
- * Uses --autopilot, --allow-all, --no-ask-user for fully autonomous execution.
- * --plan activates plan mode for deeper reasoning (used by planner agents).
- * --max-autopilot-continues prevents runaway sessions.
- *
- * Prompts are written to a temp file in the working directory to avoid
- * shell argument parsing issues on Windows (cmd.exe mangles special characters
- * in long, complex prompts containing backticks, quotes, and JSON).
+ * Always captures stdout for usage parsing. In non-quiet mode, output
+ * is echoed to the terminal in real-time (passthrough). In quiet mode,
+ * output is buffered silently. Returns parsed CliOutput with real PRU data.
  */
 export function launchCopilotCli(
   workingDir: string,
   prompt: string,
   options?: LaunchOptions,
-): Promise<number> {
+): Promise<CliOutput> {
   return new Promise((resolve, reject) => {
     const agentName = options?.agent ?? "forge-orchestrator";
     const maxContinues = options?.maxContinues ?? 25;
@@ -160,7 +285,9 @@ export function launchCopilotCli(
     fs.writeFileSync(promptFilePath, prompt, "utf-8");
 
     const args = [
-      "-p", `Read and follow all instructions in ${promptFileName}`,
+      "-p", options?.fleet
+        ? `/fleet Read and follow all instructions in ${promptFileName}`
+        : `Read and follow all instructions in ${promptFileName}`,
       "--agent", agentName,
       "--autopilot",
       "--allow-all",
@@ -168,19 +295,39 @@ export function launchCopilotCli(
       "--max-autopilot-continues", String(maxContinues),
     ];
 
-    // Note: --plan flag is not supported by Copilot CLI.
-    // Planning behavior is driven by the planner agent's prompt content.
-
     if (options?.model) {
       args.push("--model", options.model);
     }
 
     const cmd = buildShellCommand("copilot", args);
+    // Always pipe stdio so we can capture stdout for parsing
     const child = spawn(cmd, {
       cwd: workingDir,
-      stdio: options?.quiet ? "pipe" : "inherit",
+      stdio: "pipe",
       shell: true,
     });
+
+    let stdoutBuf = "";
+
+    if (child.stdout) {
+      child.stdout.on("data", (chunk: Buffer) => {
+        const text = chunk.toString();
+        stdoutBuf += text;
+        // In non-quiet mode, echo to terminal in real-time
+        if (!options?.quiet) {
+          process.stdout.write(text);
+        }
+      });
+    }
+
+    if (child.stderr) {
+      child.stderr.on("data", (chunk: Buffer) => {
+        // In non-quiet mode, echo stderr to terminal
+        if (!options?.quiet) {
+          process.stderr.write(chunk);
+        }
+      });
+    }
 
     child.on("error", (err) => {
       fs.removeSync(promptFilePath);
@@ -189,7 +336,7 @@ export function launchCopilotCli(
 
     child.on("close", (code) => {
       fs.removeSync(promptFilePath);
-      resolve(code ?? 0);
+      resolve(parseCopilotOutput(stdoutBuf, code ?? 0));
     });
   });
 }
@@ -205,6 +352,8 @@ export interface WriterResult {
   agent: string;
   exitCode: number;
   durationMs: number;
+  /** Parsed CLI output with real PRU and token stats */
+  output: CliOutput;
 }
 
 /** Result of parallel Copilot CLI execution */
@@ -212,6 +361,10 @@ export interface ParallelResult {
   results: WriterResult[];
   failed: number;
   totalDurationMs: number;
+  /** Aggregated PRU across all parallel writers */
+  totalPremiumRequests: number;
+  /** Aggregated CLI output */
+  aggregatedOutput: CliOutput;
 }
 
 /** Human-readable labels for writer agents */
@@ -235,9 +388,11 @@ export function formatDuration(ms: number): string {
 }
 
 /**
- * Launch multiple Copilot CLI processes in parallel (Turbo mode).
+ * Launch multiple Copilot CLI processes in parallel.
+ * @deprecated Turbo mode now uses /fleet via a single session instead.
+ * Kept for potential future use or external tooling.
  * Each task spawns an independent `copilot` process targeting a specific writer agent.
- * Output is suppressed (quiet mode) — progress is reported via the onComplete callback.
+ * Output is captured for PRU tracking — progress is reported via the onComplete callback.
  */
 export async function launchCopilotCliParallel(
   workingDir: string,
@@ -249,7 +404,7 @@ export async function launchCopilotCliParallel(
 
   const promises = tasks.map(async (task) => {
     const taskStart = Date.now();
-    const exitCode = await launchCopilotCli(workingDir, task.prompt, {
+    const cliOutput = await launchCopilotCli(workingDir, task.prompt, {
       ...options,
       agent: task.agent,
       maxContinues: options?.maxContinues ?? 15,
@@ -257,17 +412,22 @@ export async function launchCopilotCliParallel(
     });
     const result: WriterResult = {
       agent: task.agent,
-      exitCode,
+      exitCode: cliOutput.exitCode,
       durationMs: Date.now() - taskStart,
+      output: cliOutput,
     };
     onComplete?.(result);
     return result;
   });
 
   const results = await Promise.all(promises);
+  const allOutputs = results.map(r => r.output);
+  const aggregated = aggregateCliOutputs(allOutputs);
   return {
     results,
     failed: results.filter((r) => r.exitCode !== 0).length,
     totalDurationMs: Date.now() - start,
+    totalPremiumRequests: aggregated.premiumRequests,
+    aggregatedOutput: aggregated,
   };
 }

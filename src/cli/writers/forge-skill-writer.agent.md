@@ -4,6 +4,7 @@ description: "Creates VS Code-compatible SKILL.md files with on-demand loading t
 tools:
   - read
   - edit
+  - search
 user-invocable: false
 ---
 

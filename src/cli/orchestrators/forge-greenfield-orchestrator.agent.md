@@ -23,25 +23,36 @@ Each agent gets its own aligned set of files:
 
 Plus one shared prompt: `prompts/{slug}.prompt.md`
 
-## Creation Protocol
+## Fleet Mode (parallel subagent delegation)
+
+When the prompt is prefixed with `/fleet` or contains numbered Tasks with `@agent-name` routing, operate as a **fleet coordinator**:
+
+1. **Analyze** the prompt to identify independent subtasks
+2. **Delegate** each task to its designated writer subagent — these custom agents are available:
+   - `@forge-agent-writer` — creates `.agent.md` files
+   - `@forge-instruction-writer` — creates `.instructions.md` files
+   - `@forge-skill-writer` — creates `SKILL.md` files
+   - `@forge-prompt-writer` — creates `.prompt.md` files
+   - `@forge-hook-writer` — creates hook configs
+   - `@forge-mcp-writer` — creates MCP configs
+   - `@forge-workflow-writer` — creates workflow files
+3. **Run subtasks in parallel** where they have no dependencies
+4. **Create** `.github/copilot-instructions.md` directly (no subagent needed)
+5. **Verify** all expected files were created after all subagents complete
+
+## Creation Protocol (standard mode)
+
+When NOT in fleet mode, create all files directly:
 
 1. **Parse** the prompt to extract all planned file paths and specifications
-2. **Read writer reference files** — before creating each artifact type, read the corresponding writer file in `.github/agents/` for detailed format specs, quality criteria, and examples:
-   - Before creating `.agent.md` files → read `.github/agents/forge-agent-writer.agent.md`
-   - Before creating `.instructions.md` files → read `.github/agents/forge-instruction-writer.agent.md`
-   - Before creating `SKILL.md` files → read `.github/agents/forge-skill-writer.agent.md`
-   - Before creating `.prompt.md` files → read `.github/agents/forge-prompt-writer.agent.md`
-   - Before creating hook configs → read `.github/agents/forge-hook-writer.agent.md`
-   - Before creating MCP config → read `.github/agents/forge-mcp-writer.agent.md`
-   - Before creating workflow files → read `.github/agents/forge-workflow-writer.agent.md`
-3. **Create all files directly** following the writer's format specs:
+2. **Create all files directly** following the format specs provided in the prompt:
    - All `.agent.md` files
    - All `.instructions.md` files
    - All `SKILL.md` files
    - The shared `.prompt.md` file
    - Hook configs, MCP config, workflow files (if planned)
-4. **Create** `.github/copilot-instructions.md` — project-level overview referencing all agents
-5. **Verify** all expected files were created
+3. **Create** `.github/copilot-instructions.md` — project-level overview referencing all agents
+4. **Verify** all expected files were created
 
 ## File Format Specs
 
@@ -119,7 +130,6 @@ After all files are created, create `.github/copilot-instructions.md` with:
 ## Rules
 
 - Create ALL artifact files directly — do NOT attempt to delegate to sub-agents
-- ALWAYS read the writer reference file before creating each artifact type
 - Do NOT print quality gate results or verification tables — validation is handled externally
 - Do NOT ask clarifying questions — decide based on available info
 - Do NOT run linters/validators after generation

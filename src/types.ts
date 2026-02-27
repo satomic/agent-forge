@@ -156,6 +156,8 @@ export interface InitOptions {
   useCases?: string[];
   /** Generation speed: "standard" (single session, ~2 PRU) or "turbo" (parallel sessions, faster) */
   speed?: SpeedStrategy;
+  /** Skip the prerequisite check at the start of `forge init` */
+  skipCheck?: boolean;
 }
 
 /** Generation speed strategy */

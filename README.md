@@ -66,7 +66,7 @@ The CLI guides you through a few steps depending on the mode you choose:
 ```
 ? Generation speed:
 ❯ Standard  — Sequential generation, ~N PRU
-  Turbo     — Parallel generation, faster ⚡
+  Turbo     — Fleet mode, parallel subagents ⚡
 ```
 
 Done. Your files are generated, validated, and ready in `.github/`.
@@ -143,7 +143,7 @@ Describe what you need and AGENT-FORGE plans the agent decomposition, generates 
 forge generate "API rate limiter" --speed turbo
 ```
 
-Turbo mode runs all writer agents in parallel for faster generation (uses more PRUs).
+Turbo mode uses Copilot CLI's `/fleet` command to delegate artifact creation to specialized writer subagents in parallel within a single session.
 
 ### Generate only specific artifact types
 
@@ -241,8 +241,8 @@ forge init / generate
 
 | Mode | How it works | Cost |
 |------|-------------|------|
-| **Standard** | Single Copilot CLI session runs all writers sequentially | ~2 PRU |
-| **Turbo** | Parallel Copilot CLI sessions, one per writer agent | ~N+2 PRU |
+| **Standard** | Single Copilot CLI session, orchestrator creates all files sequentially | ~2 PRU |
+| **Turbo** | Single session with `/fleet` — parallel subagents, each with own context window | ~N+1 PRU |
 
 ### Smart merging
 
@@ -269,7 +269,7 @@ When generating into a project that already has `.github/` files, AGENT-FORGE de
 | `--description <text>` | Use case description (skip prompt) |
 | `--model <model>` | AI model to use (skip prompt) |
 | `--strategy <strategy>` | Analyze strategy: `auto` (scan-only) or `guided` (scan + custom requirements) |
-| `--speed <speed>` | `standard` (sequential, ~2 PRU) or `turbo` (parallel, faster) |
+| `--speed <speed>` | `standard` (sequential, ~2 PRU) or `turbo` (fleet, ~N+1 PRU) |
 | `--use-cases <ids>` | Comma-separated template IDs (skip prompt) |
 | `--force` | Overwrite existing files |
 
@@ -303,7 +303,7 @@ forge init --mode analyze --strategy guided --description "Add security scanning
 | `--model <model>` | AI model to use (skip prompt) |
 | `--mode <mode>` | `discovery`, `full`, `on-demand`, `mcp-server`, `hooks`, `agentic-workflow` |
 | `--types <types>` | Comma-separated artifact types for on-demand mode |
-| `--speed <speed>` | `standard` (single session, ~2 PRU) or `turbo` (parallel, faster) |
+| `--speed <speed>` | `standard` (single session, ~2 PRU) or `turbo` (fleet, ~N+1 PRU) |
 
 ```bash
 forge generate "API rate limiter with per-tenant limits"
@@ -401,18 +401,22 @@ src/
 │   ├── scaffold.ts         # Workspace initialization & file installation
 │   └── validator.ts        # YAML validation, tool name checks & auto-fix
 ├── cli/                    # Multi-agent orchestration templates
-│   ├── copilot-instructions.md
-│   ├── forge-greenfield-planner.agent.md
-│   ├── forge-greenfield-orchestrator.agent.md
-│   ├── forge-brownfield-planner.agent.md
-│   ├── forge-brownfield-orchestrator.agent.md
-│   ├── forge-agent-writer.agent.md
-│   ├── forge-instruction-writer.agent.md
-│   ├── forge-skill-writer.agent.md
-│   ├── forge-prompt-writer.agent.md
-│   ├── forge-hook-writer.agent.md
-│   ├── forge-mcp-writer.agent.md
-│   └── forge-workflow-writer.agent.md
+│   ├── planners/           # Plan-phase agents (forge-plan.json)
+│   │   ├── forge-brownfield-planner.agent.md
+│   │   └── forge-greenfield-planner.agent.md
+│   ├── orchestrators/      # Orchestration-phase agents
+│   │   ├── forge-brownfield-orchestrator.agent.md
+│   │   └── forge-greenfield-orchestrator.agent.md
+│   ├── writers/            # Artifact writer agents
+│   │   ├── forge-agent-writer.agent.md
+│   │   ├── forge-hook-writer.agent.md
+│   │   ├── forge-instruction-writer.agent.md
+│   │   ├── forge-mcp-writer.agent.md
+│   │   ├── forge-prompt-writer.agent.md
+│   │   ├── forge-skill-writer.agent.md
+│   │   └── forge-workflow-writer.agent.md
+│   └── reference/          # Format specification & quality rules
+│       └── copilot-instructions.md
 └── template/               # Gallery template files
     ├── Agentic-Work-flow/
     ├── Hooks/

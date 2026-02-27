@@ -33,6 +33,7 @@ program
     "--use-cases <ids>",
     "Comma-separated template IDs to install (e.g., code-review,testing)",
   )
+  .option("--skip-check", "Skip the prerequisite check", false)
   .action(async (opts) => {
     await initCommand({
       force: opts.force,
@@ -42,6 +43,7 @@ program
       analyzeStrategy: opts.strategy as AnalyzeStrategy | undefined,
       useCases: opts.useCases?.split(",").map((s: string) => s.trim()),
       speed: opts.speed as SpeedStrategy | undefined,
+      skipCheck: opts.skipCheck,
     });
   });
 

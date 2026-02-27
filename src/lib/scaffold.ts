@@ -218,31 +218,31 @@ export async function prepareGenerationWorkspace(
     dirPromises.push(fs.ensureDir(path.join(githubDir, "workflows")));
   }
 
-  // Pipeline-specific templates
+  // Pipeline-specific templates (grouped in subfolders)
   const plannerAgent = pipeline === "brownfield"
-    ? "forge-brownfield-planner.agent.md"
-    : "forge-greenfield-planner.agent.md";
+    ? "planners/forge-brownfield-planner.agent.md"
+    : "planners/forge-greenfield-planner.agent.md";
   const orchestratorAgent = pipeline === "brownfield"
-    ? "forge-brownfield-orchestrator.agent.md"
-    : "forge-greenfield-orchestrator.agent.md";
+    ? "orchestrators/forge-brownfield-orchestrator.agent.md"
+    : "orchestrators/forge-greenfield-orchestrator.agent.md";
 
   const cliTemplates = [
     plannerAgent,
     orchestratorAgent,
     // Shared writers (used by both pipelines)
-    "forge-agent-writer.agent.md",
-    "forge-instruction-writer.agent.md",
-    "forge-prompt-writer.agent.md",
-    "forge-skill-writer.agent.md",
-    "forge-hook-writer.agent.md",
-    "forge-mcp-writer.agent.md",
-    "forge-workflow-writer.agent.md",
+    "writers/forge-agent-writer.agent.md",
+    "writers/forge-instruction-writer.agent.md",
+    "writers/forge-prompt-writer.agent.md",
+    "writers/forge-skill-writer.agent.md",
+    "writers/forge-hook-writer.agent.md",
+    "writers/forge-mcp-writer.agent.md",
+    "writers/forge-workflow-writer.agent.md",
   ];
 
   const copyPromises = cliTemplates.map((file) =>
     fs.copy(
       path.join(cliDir, file),
-      path.join(githubDir, "agents", file),
+      path.join(githubDir, "agents", path.basename(file)),
     ),
   );
 

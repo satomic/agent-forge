@@ -4,6 +4,7 @@ description: "Creates VS Code-compatible .agent.md files with proper YAML frontm
 tools:
   - read
   - edit
+  - search
 user-invocable: false
 ---
 

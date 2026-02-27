@@ -4,6 +4,7 @@ description: "Creates VS Code-compatible .instructions.md files with applyTo glo
 tools:
   - read
   - edit
+  - search
 user-invocable: false
 ---
 
