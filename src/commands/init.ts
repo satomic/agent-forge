@@ -371,11 +371,12 @@ async function runGeneration(
 
   // Phase 1: Planning
   console.log();
-  console.log(chalk.hex("#FF8C00").bold(`  ── Phase 1: Planning (${pipelineLabel}) ` + "─".repeat(Math.max(0, 30 - pipelineLabel.length))));
-  console.log(chalk.dim(`  │ Model: ${model}`));
-  console.log(chalk.dim(`  │ Mode: ${mode}`));
+  console.log(chalk.hex("#FF8C00").bold("  ── Phase 1: Planning " + "─".repeat(36)));
+  console.log(chalk.dim(`  │ Pipeline:  ${pipelineLabel}`));
+  console.log(chalk.dim(`  │ Model:     ${model}`));
+  console.log(chalk.dim(`  │ Mode:      ${mode}`));
   if (domains.length > 1) {
-    console.log(chalk.dim(`  │ Domains: ${domains.map((d) => d.title).join(", ")}`));
+    console.log(chalk.dim(`  │ Domains:   ${domains.map((d) => d.title).join(", ")}`));
   }
   console.log();
 
@@ -415,15 +416,18 @@ async function runGeneration(
   // Phase 2: Generate artifacts
   console.log();
   const speedLabel = speed === "turbo" ? "⚡ Turbo" : "Standard";
-  console.log(chalk.hex("#FF8C00").bold(`  ── Phase 2: Generating (${speedLabel}) ` + "─".repeat(Math.max(0, 28 - speedLabel.length))));
+  console.log(chalk.hex("#FF8C00").bold("  ── Phase 2: Generating (" + speedLabel + ") " + "─".repeat(Math.max(0, 34 - speedLabel.length))));
 
   let exitCode: number;
   const phase2Start = Date.now();
+  let writerDurationMs = 0;
+  let instrDurationMs = 0;
 
   if (speed === "turbo") {
     // Turbo: spawn parallel Copilot CLI processes per writer agent
     const writerTasks = buildWriterPrompts(plan, mode);
-    console.log(chalk.dim(`  │ ${writerTasks.length} parallel sessions → ~${(writerTasks.length + 1) * multiplier} PRU`));
+    console.log(chalk.dim(`  │ Writers:   ${writerTasks.length} parallel sessions`));
+    console.log(chalk.dim(`  │ Estimate:  ~${(writerTasks.length + 1) * multiplier} PRU`));
     console.log();
 
     // Show pending writers
@@ -443,9 +447,11 @@ async function runGeneration(
         console.log(`    ${chalk.red("✘")} ${label} ${duration}`);
       }
     });
+    writerDurationMs = result.totalDurationMs;
 
     // Create copilot-instructions.md after all writers complete
     console.log();
+    const instrStart = Date.now();
     const instrSpinner = ora("  Creating copilot-instructions.md...").start();
     const instrPrompt = buildCopilotInstructionsPrompt(plan);
     const instrCode = await launchCopilotCli(tempDir, instrPrompt, {
@@ -454,16 +460,18 @@ async function runGeneration(
       maxContinues: 5,
       quiet: true,
     });
+    instrDurationMs = Date.now() - instrStart;
     if (instrCode === 0) {
-      instrSpinner.succeed("  copilot-instructions.md");
+      instrSpinner.succeed(`  copilot-instructions.md ${chalk.dim(formatDuration(instrDurationMs))}`);
     } else {
-      instrSpinner.warn("  copilot-instructions.md (with warnings)");
+      instrSpinner.warn(`  copilot-instructions.md (with warnings) ${chalk.dim(formatDuration(instrDurationMs))}`);
     }
 
     exitCode = result.failed > 0 ? 1 : 0;
   } else {
-    // Standard: single orchestrator process with sequential sub-agent delegation
-    console.log(chalk.dim(`  │ Single orchestrator session → ~${2 * multiplier} PRU`));
+    // Standard: single orchestrator process
+    console.log(chalk.dim(`  │ Session:   single orchestrator`));
+    console.log(chalk.dim(`  │ Estimate:  ~${2 * multiplier} PRU`));
     console.log();
 
     const orchPrompt = buildOrchestrationPromptFromPlan(plan, mode);
@@ -477,23 +485,45 @@ async function runGeneration(
 
   // Phase 3: Validation
   console.log();
-  console.log(chalk.hex("#FF8C00").bold("  ── Phase 3: Validation ─────────────────────────"));
+  console.log(chalk.hex("#FF8C00").bold("  ── Phase 3: Validation " + "─".repeat(34)));
   const fixSpinner2 = ora("  Checking artifacts...").start();
   const report = await postGenerationValidateAndFix(targetDir);
-  if (report.errors.length === 0) {
-    fixSpinner2.succeed(`  ${report.passed.length} files passed${report.warnings.length > 0 ? `, ${report.warnings.length} warning(s)` : ""}`);
+  if (report.errors.length === 0 && report.warnings.length === 0) {
+    fixSpinner2.succeed(`  ${report.passed.length} files passed — all checks clean`);
+  } else if (report.errors.length === 0) {
+    fixSpinner2.succeed(`  ${report.passed.length} files passed, ${report.warnings.length} warning(s)`);
+    for (const w of report.warnings) {
+      const fileName = path.basename(w.file);
+      console.log(chalk.dim(`    ⚠ ${fileName}: ${w.message}`));
+    }
   } else {
     fixSpinner2.warn(`  ${report.errors.length} error(s) remain after auto-fix`);
+    for (const e of report.errors) {
+      const fileName = path.basename(e.file);
+      console.log(chalk.red(`    ✗ ${fileName}: ${e.message}`));
+    }
+    for (const w of report.warnings) {
+      const fileName = path.basename(w.file);
+      console.log(chalk.dim(`    ⚠ ${fileName}: ${w.message}`));
+    }
   }
 
   // Results
   console.log();
-  console.log(chalk.hex("#FF8C00").bold("  ── Results ─────────────────────────────────────"));
+  console.log(chalk.hex("#FF8C00").bold("  ── Results " + "─".repeat(46)));
 
   if (exitCode === 0) {
     const durationStr = formatDuration(phase2Duration);
     console.log();
-    console.log(`  ${chalk.green.bold("✓")} Generated ${chalk.bold(String(installed.length))} files in ${chalk.bold(durationStr)} ${chalk.dim(`(~${totalPru} PRU)`)}`);
+    console.log(`  ${chalk.green.bold("✓")} Generation complete`);
+    console.log();
+    console.log(chalk.dim("  ┌─────────────────────────────────────────┐"));
+    console.log(chalk.dim("  │") + `  Files:     ${chalk.bold(String(installed.length))}`.padEnd(42) + chalk.dim("│"));
+    console.log(chalk.dim("  │") + `  Duration:  ${chalk.bold(durationStr)}${speed === "turbo" ? chalk.dim(` (writers ${formatDuration(writerDurationMs)})`) : ""}`.padEnd(42) + chalk.dim("│"));
+    console.log(chalk.dim("  │") + `  Cost:      ${chalk.bold(`~${totalPru} PRU`)}`.padEnd(42) + chalk.dim("│"));
+    console.log(chalk.dim("  │") + `  Model:     ${chalk.bold(model)}`.padEnd(42) + chalk.dim("│"));
+    console.log(chalk.dim("  │") + `  Speed:     ${chalk.bold(speed === "turbo" ? "Turbo (parallel)" : "Standard")}`.padEnd(42) + chalk.dim("│"));
+    console.log(chalk.dim("  └─────────────────────────────────────────┘"));
     printGeneratedFiles(plan.slug, installed);
   } else {
     console.log();
@@ -540,11 +570,38 @@ function printGeneratedFiles(_slug: string, files: string[]): void {
   const vscodeFiles = files.filter((f) => f.startsWith(".vscode/"));
 
   if (githubFiles.length > 0) {
+    // Group files by subdirectory
+    const groups = new Map<string, string[]>();
+    for (const f of githubFiles) {
+      const parts = f.split("/");
+      const dir = parts.length > 1 ? parts[0] : "";
+      const name = parts.length > 1 ? parts.slice(1).join("/") : f;
+      if (!groups.has(dir)) groups.set(dir, []);
+      groups.get(dir)!.push(name);
+    }
+
     console.log();
     console.log(chalk.bold("  .github/"));
-    for (let i = 0; i < githubFiles.length; i++) {
-      const prefix = i === githubFiles.length - 1 ? "└──" : "├──";
-      console.log(`    ${prefix} ${githubFiles[i]}`);
+    const dirs = [...groups.keys()];
+    for (let d = 0; d < dirs.length; d++) {
+      const dir = dirs[d];
+      const dirFiles = groups.get(dir)!;
+      const isLastDir = d === dirs.length - 1;
+      const dirPrefix = isLastDir ? "└── " : "├── ";
+      const childIndent = isLastDir ? "    " : "│   ";
+
+      if (dir) {
+        console.log(`    ${dirPrefix}${chalk.bold(dir + "/")}`);
+        for (let i = 0; i < dirFiles.length; i++) {
+          const filePrefix = i === dirFiles.length - 1 ? "└── " : "├── ";
+          console.log(`    ${childIndent}${filePrefix}${dirFiles[i]}`);
+        }
+      } else {
+        for (let i = 0; i < dirFiles.length; i++) {
+          const filePrefix = (isLastDir && i === dirFiles.length - 1) ? "└── " : "├── ";
+          console.log(`    ${filePrefix}${dirFiles[i]}`);
+        }
+      }
     }
   }
 
@@ -553,8 +610,8 @@ function printGeneratedFiles(_slug: string, files: string[]): void {
     console.log(chalk.bold("  .vscode/"));
     for (let i = 0; i < vscodeFiles.length; i++) {
       const name = vscodeFiles[i].replace(".vscode/", "");
-      const prefix = i === vscodeFiles.length - 1 ? "└──" : "├──";
-      console.log(`    ${prefix} ${name}`);
+      const prefix = i === vscodeFiles.length - 1 ? "└── " : "├── ";
+      console.log(`    ${prefix}${name}`);
     }
   }
 }

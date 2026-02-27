@@ -69,6 +69,7 @@ Scripts receive JSON on stdin, output JSON on stdout.
 
 ### preToolUse Script (can deny tool execution)
 
+**Bash (macOS / Linux):**
 ```bash
 #!/bin/bash
 INPUT=$(cat)
@@ -87,8 +88,28 @@ fi
 exit 0
 ```
 
+**PowerShell (Windows):**
+```powershell
+$Input = $input | Out-String
+$json = $Input | ConvertFrom-Json
+$toolName = $json.toolName
+
+# Block dangerous commands
+if ($toolName -eq 'bash') {
+  $command = ($json.toolArgs | ConvertFrom-Json).command
+  if ($command -match '(rm -rf /|DROP TABLE|DELETE FROM)') {
+    Write-Output '{"permissionDecision":"deny","permissionDecisionReason":"Destructive command blocked by policy"}'
+    exit 0
+  }
+}
+
+# Allow by default (or omit output)
+exit 0
+```
+
 ### postToolUse Script (runs after tool completes)
 
+**Bash (macOS / Linux):**
 ```bash
 #!/bin/bash
 INPUT=$(cat)
@@ -101,10 +122,25 @@ echo "$(date),${TOOL_NAME},${RESULT_TYPE}" >> tool-stats.csv
 exit 0
 ```
 
+**PowerShell (Windows):**
+```powershell
+$Input = $input | Out-String
+$json = $Input | ConvertFrom-Json
+$toolName = $json.toolName
+$resultType = $json.toolResult.resultType
+
+# Log tool execution statistics
+"$(Get-Date -Format o),$toolName,$resultType" | Out-File -Append tool-stats.csv
+
+exit 0
+```
+
 ## Quality Criteria
 
-- Scripts must be executable (`chmod +x`) with proper shebang (`#!/bin/bash`)
-- Use `jq` for JSON parsing (standard in CI environments)
+- **Bash scripts** (macOS/Linux): must be executable (`chmod +x`) with proper shebang (`#!/bin/bash`)
+- **PowerShell scripts** (Windows): use `.ps1` extension; no shebang needed
+- Hook JSON supports both shells via `"bash"` and `"powershell"` keys — always provide both for cross-platform compatibility
+- Use `jq` for JSON parsing in bash, `ConvertFrom-Json` in PowerShell
 - Set reasonable timeouts (5-30 seconds via `timeoutSec`)
 - Only `preToolUse` can return `permissionDecision: "deny"` to block tool execution
 - Output for `preToolUse` is flat JSON: `{"permissionDecision":"deny","permissionDecisionReason":"..."}` — no wrapper object

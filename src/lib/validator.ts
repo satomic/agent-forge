@@ -7,7 +7,7 @@ import type {
   ValidationFinding,
   ArtifactType,
 } from "../types.js";
-import { isCopilotCliInstalled } from "./copilot-cli.js";
+import { isCopilotCliInstalled, buildShellCommand } from "./copilot-cli.js";
 
 /**
  * Lightweight single-shot Copilot CLI call for JSON output.
@@ -27,7 +27,8 @@ function callLlmForJson<T = unknown>(
     const args = ["-p", `Read and follow all instructions in ${promptFileName}`, "--autopilot", "--no-ask-user"];
     if (options?.model) args.push("--model", options.model);
 
-    const child = spawn("copilot", args, {
+    const cmd = buildShellCommand("copilot", args);
+    const child = spawn(cmd, {
       cwd: workingDir,
       stdio: ["pipe", "pipe", "pipe"],
       shell: true,
@@ -831,14 +832,13 @@ function validateBodyQuality(
 ): void {
   // Detect common placeholder/TODO patterns
   const placeholderPatterns = [
-    { pattern: /\bTODO\b/i, label: "TODO" },
+    { pattern: /\bTODO\b/, label: "TODO" },
     { pattern: /\bPLACEHOLDER\b/i, label: "PLACEHOLDER" },
     { pattern: /\bINSERT\s+HERE\b/i, label: "INSERT HERE" },
     { pattern: /\bLorem\s+ipsum\b/i, label: "Lorem ipsum" },
     { pattern: /\byour\s+\w+\s+here\b/i, label: "your ... here" },
-    { pattern: /\bFIXME\b/i, label: "FIXME" },
+    { pattern: /\bFIXME\b/, label: "FIXME" },
     { pattern: /\bXXX\b/, label: "XXX" },
-    { pattern: /\[\.\.\.[^\]]*\]/, label: "[...] placeholder" },
   ];
 
   for (const { pattern, label } of placeholderPatterns) {

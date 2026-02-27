@@ -11,6 +11,37 @@ import path from "path";
 import { select } from "@inquirer/prompts";
 import chalk from "chalk";
 
+/**
+ * Quote a single shell argument so it is safe to embed in a command string
+ * passed to `spawn(..., { shell: true })`.
+ * Works for POSIX shells (/bin/sh) and Windows cmd.exe.
+ */
+function quoteArg(arg: string): string {
+  if (process.platform === "win32") {
+    // cmd.exe: wrap in double quotes; escape inner double quotes with \"
+    // and escape percent signs which cmd.exe interprets
+    if (/[ "&|<>^%!]/.test(arg)) {
+      return `"${arg.replace(/"/g, '\\"')}"`;
+    }
+    return arg;
+  }
+  // POSIX: wrap in single quotes; escape embedded single quotes
+  if (/[ "'\\$`!#&|;()<>{}\[\]*?~]/.test(arg)) {
+    return `'${arg.replace(/'/g, "'\\''")}'`;
+  }
+  return arg;
+}
+
+/**
+ * Build a shell-safe command string from a command and args array.
+ * Each argument is quoted only when it contains shell metacharacters.
+ * The result is safe to pass as the first argument to
+ * `spawn(cmd, { shell: true })` (without an args array).
+ */
+export function buildShellCommand(cmd: string, args: string[]): string {
+  return [cmd, ...args.map(quoteArg)].join(" ");
+}
+
 let _copilotCliInstalled: boolean | undefined;
 
 /**
@@ -24,6 +55,7 @@ export function isCopilotCliInstalled(): boolean {
       encoding: "utf-8",
       timeout: 5000,
       stdio: ["pipe", "pipe", "pipe"],
+      shell: true,
     });
     _copilotCliInstalled = true;
   } catch {
@@ -41,6 +73,7 @@ export function getCopilotCliVersion(): string | null {
       encoding: "utf-8",
       timeout: 5000,
       stdio: ["pipe", "pipe", "pipe"],
+      shell: true,
     }).trim();
     const match = output.match(/(\d+\.\d+[\d.]*)/);
     return match ? match[1] : output.slice(0, 30);
@@ -55,7 +88,7 @@ export const AVAILABLE_MODELS = [
   { value: "claude-sonnet-4.5", name: "Claude Sonnet 4.5", description: "Fast — higher quality reasoning", premium: 1 },
   { value: "gpt-4.1",           name: "GPT-4.1",          description: "Fast — efficient code generation", premium: 1 },
   { value: "gpt-5.2-codex",     name: "GPT 5.2 Codex",    description: "Balanced — strong code generation", premium: 1 },
-  { value: "gemini-2.5-pro",    name: "Gemini 2.5 Pro",   description: "Strong reasoning — large context window", premium: 2 },
+  { value: "gemini-3-pro-preview", name: "Gemini 3 Pro",  description: "Strong reasoning — large context window", premium: 2 },
   { value: "claude-opus-4.6",   name: "Claude Opus 4.6",  description: "Highest quality — deep reasoning", premium: 5 },
 ] as const;
 
@@ -97,7 +130,7 @@ export interface LaunchOptions {
   maxContinues?: number;
   /** Suppress terminal output (pipe instead of inherit stdio) */
   quiet?: boolean;
-  /** Launch in /plan mode for deeper reasoning before acting (used by planner agents) */
+  /** @deprecated The --plan flag is not supported by Copilot CLI. Planning is handled via prompt content. */
   plan?: boolean;
 }
 
@@ -135,15 +168,15 @@ export function launchCopilotCli(
       "--max-autopilot-continues", String(maxContinues),
     ];
 
-    if (options?.plan) {
-      args.push("--plan");
-    }
+    // Note: --plan flag is not supported by Copilot CLI.
+    // Planning behavior is driven by the planner agent's prompt content.
 
     if (options?.model) {
       args.push("--model", options.model);
     }
 
-    const child = spawn("copilot", args, {
+    const cmd = buildShellCommand("copilot", args);
+    const child = spawn(cmd, {
       cwd: workingDir,
       stdio: options?.quiet ? "pipe" : "inherit",
       shell: true,

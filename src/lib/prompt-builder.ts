@@ -471,13 +471,15 @@ export function buildOrchestrationPromptFromPlan(
       ``,
       agentDetails,
       ``,
-      `### Delegation (run sub-agents in parallel)`,
+      `### Creation Tasks`,
       ``,
-      `**forge-agent-writer** — Create ALL agent files listed above.`,
+      `Before creating each artifact type, **read the corresponding writer reference file** in \`.github/agents/\` for detailed format specs, quality criteria, and examples.`,
+      ``,
+      `**Agent files** — Read \`.github/agents/forge-agent-writer.agent.md\` first, then create ALL agent files listed above.`,
       `  - Each MUST include: \`argument-hint\`, \`user-invocable: true\`, \`execute\` (or \`run_in_terminal\`) and \`get_errors\` in tools list.`,
       plan.agents.length > 1 ? `  - Add \`handoffs\` between agents so users can transition between them.` : ``,
-      `**forge-instruction-writer** — Create ALL instruction files (one per agent, each with its own applyTo glob).`,
-      `**forge-skill-writer** — Create ALL skill files (one per agent). Each skill description MUST have ≥5 USE FOR and ≥3 DO NOT USE FOR trigger phrases.`,
+      `**Instruction files** — Read \`.github/agents/forge-instruction-writer.agent.md\` first, then create ALL instruction files (one per agent, each with its own applyTo glob).`,
+      `**Skill files** — Read \`.github/agents/forge-skill-writer.agent.md\` first, then create ALL skill files (one per agent). Each skill description MUST have ≥5 USE FOR and ≥3 DO NOT USE FOR trigger phrases.`,
       ``,
     );
   }
@@ -485,7 +487,7 @@ export function buildOrchestrationPromptFromPlan(
   // Prompt
   if (plan.prompt) {
     sections.push(
-      `**forge-prompt-writer** — Create: \`.github/prompts/${plan.prompt.slug}.prompt.md\``,
+      `**Prompt file** — Read \`.github/agents/forge-prompt-writer.agent.md\` first, then create: \`.github/prompts/${plan.prompt.slug}.prompt.md\``,
       `  - Description: "${plan.prompt.description}"`,
       `  - Include \`agent:\` and \`argument-hint:\` in frontmatter.`,
       `  - Route to all agents: ${plan.agents.map((a) => `@${a.title}`).join(", ")}`,
@@ -505,21 +507,21 @@ export function buildOrchestrationPromptFromPlan(
   // Optional hooks/mcp/workflow
   if (plan.hooks) {
     sections.push(
-      `**forge-hook-writer** — Create: \`.github/hooks/${plan.hooks.slug}.json\` with companion scripts`,
+      `**Hook config** — Read \`.github/agents/forge-hook-writer.agent.md\` first, then create: \`.github/hooks/${plan.hooks.slug}.json\` with companion scripts`,
       `Events: ${plan.hooks.events.join(", ")}. Purpose: "${plan.hooks.description}"`,
       ``,
     );
   }
   if (plan.mcp) {
     sections.push(
-      `**forge-mcp-writer** — Create: \`.vscode/mcp.json\``,
+      `**MCP config** — Read \`.github/agents/forge-mcp-writer.agent.md\` first, then create: \`.vscode/mcp.json\``,
       `Servers: ${plan.mcp.servers.join(", ")}. Purpose: "${plan.mcp.description}"`,
       ``,
     );
   }
   if (plan.workflow) {
     sections.push(
-      `**forge-workflow-writer** — Create: \`.github/workflows/${plan.workflow.slug}.md\``,
+      `**Workflow file** — Read \`.github/agents/forge-workflow-writer.agent.md\` first, then create: \`.github/workflows/${plan.workflow.slug}.md\``,
       `Trigger: ${plan.workflow.trigger}. Purpose: "${plan.workflow.description}"`,
       ``,
     );
@@ -527,10 +529,9 @@ export function buildOrchestrationPromptFromPlan(
 
   sections.push(
     `## Execution Rules`,
-    `- Delegate to the appropriate sub-agents. Do NOT write artifact files directly.`,
-    `- Run ALL sub-agents in parallel — they are independent of each other.`,
+    `- Create ALL artifact files directly. Do NOT attempt to delegate to sub-agents.`,
     `- Content must be specific to the use case — NO generic placeholders or "follow best practices" filler.`,
-    `- Pass the EXACT file paths, names, roles, and responsibilities from this plan to each sub-agent.`,
+    `- Use the EXACT file paths, names, roles, and responsibilities from this plan.`,
     `- Do NOT ask clarifying questions — make decisions based on the plan.`,
     `- Stop after all files are written. Do NOT run validation or review.`,
   );

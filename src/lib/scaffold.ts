@@ -175,13 +175,6 @@ export async function prepareGenerationWorkspace(
     ),
   );
 
-  copyPromises.push(
-    fs.copy(
-      path.join(cliDir, "copilot-instructions.md"),
-      path.join(githubDir, "copilot-instructions.md"),
-    ),
-  );
-
   await Promise.all([...dirPromises, ...copyPromises]);
 
   return { tempDir, slug, title, domains, pipeline };
@@ -284,8 +277,10 @@ export async function installGeneratedArtifacts(
  * Remove the entire temp directory after generation.
  */
 export async function cleanupGenerationWorkspace(tempDir: string): Promise<void> {
-  if (tempDir.includes(os.tmpdir()) && await fs.pathExists(tempDir)) {
-    await fs.remove(tempDir);
+  const normalizedTemp = path.resolve(tempDir);
+  const normalizedTmpdir = path.resolve(os.tmpdir());
+  if (normalizedTemp.startsWith(normalizedTmpdir) && await fs.pathExists(normalizedTemp)) {
+    await fs.remove(normalizedTemp);
   }
 }
 

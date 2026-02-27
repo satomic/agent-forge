@@ -94,6 +94,7 @@ function checkTool(command: string, displayName: string): CheckResult {
       encoding: "utf-8",
       timeout: 5000,
       stdio: ["pipe", "pipe", "pipe"],
+      shell: true,
     }).trim();
     // Extract just the version number
     const vMatch = version.match(/(\d+\.\d+[\d.]*)/);
