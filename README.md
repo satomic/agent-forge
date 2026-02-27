@@ -349,12 +349,14 @@ forge validate --fix --model claude-opus-4.6  # Fix with a specific model
 
 When using AI generation, you can choose a model interactively or pass `--model`:
 
-| Value | Description |
-|-------|-------------|
-| `claude-sonnet-4.6` | Fastest — best speed/quality tradeoff **(default)** |
-| `claude-sonnet-4.5` | Fast — higher quality reasoning |
-| `gpt-5.2-codex` | Balanced — strong code generation |
-| `claude-opus-4.6` | Slowest — highest quality output |
+| Value | Description | Premium |
+|-------|-------------|---------|
+| `claude-sonnet-4.6` | Fastest — best speed/quality tradeoff **(default)** | 1x |
+| `claude-sonnet-4.5` | Fast — higher quality reasoning | 1x |
+| `gpt-4.1` | Fast — efficient code generation | 1x |
+| `gpt-5.2-codex` | Balanced — strong code generation | 1x |
+| `gemini-3-pro-preview` | Strong reasoning — large context window | 2x |
+| `claude-opus-4.6` | Highest quality — deep reasoning | 5x |
 
 </details>
 
