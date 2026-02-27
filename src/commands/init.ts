@@ -19,6 +19,7 @@ import {
   launchCopilotCli,
   launchCopilotCliParallel,
   selectModel,
+  getModelMultiplier,
   WRITER_LABELS,
   formatDuration,
 } from "../lib/copilot-cli.js";
@@ -399,16 +400,17 @@ async function runGeneration(
   await prepareWorkspaceForPlan(tempDir, plan);
 
   // Speed selection
+  const multiplier = getModelMultiplier(model);
   const speed: SpeedStrategy = options.speed ?? await select<SpeedStrategy>({
     message: "Generation speed:",
     choices: [
-      { value: "standard" as SpeedStrategy, name: `Standard  ${chalk.dim(`— single session, ~2 PRU (slower)`)}` },
-      { value: "turbo" as SpeedStrategy, name: `Turbo     ${chalk.dim(`— parallel sessions, ~${plan.agents.length + 2} PRU (fastest)`)}` },
+      { value: "standard" as SpeedStrategy, name: `Standard  ${chalk.dim(`— single session, ~${2 * multiplier} PRU (slower)`)}` },
+      { value: "turbo" as SpeedStrategy, name: `Turbo     ${chalk.dim(`— parallel sessions, ~${(plan.agents.length + 2) * multiplier} PRU (fastest)`)}` },
     ],
     default: "standard",
   });
 
-  const totalPru = speed === "turbo" ? plan.agents.length + 2 : 2;
+  const totalPru = (speed === "turbo" ? plan.agents.length + 2 : 2) * multiplier;
 
   // Phase 2: Generate artifacts
   console.log();
@@ -421,7 +423,7 @@ async function runGeneration(
   if (speed === "turbo") {
     // Turbo: spawn parallel Copilot CLI processes per writer agent
     const writerTasks = buildWriterPrompts(plan, mode);
-    console.log(chalk.dim(`  │ ${writerTasks.length} parallel sessions → ~${writerTasks.length + 1} PRU`));
+    console.log(chalk.dim(`  │ ${writerTasks.length} parallel sessions → ~${(writerTasks.length + 1) * multiplier} PRU`));
     console.log();
 
     // Show pending writers
@@ -461,7 +463,7 @@ async function runGeneration(
     exitCode = result.failed > 0 ? 1 : 0;
   } else {
     // Standard: single orchestrator process with sequential sub-agent delegation
-    console.log(chalk.dim("  │ Single orchestrator session → ~2 PRU"));
+    console.log(chalk.dim(`  │ Single orchestrator session → ~${2 * multiplier} PRU`));
     console.log();
 
     const orchPrompt = buildOrchestrationPromptFromPlan(plan, mode);

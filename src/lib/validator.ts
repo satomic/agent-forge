@@ -19,7 +19,12 @@ function callLlmForJson<T = unknown>(
   options?: { model?: string; timeoutMs?: number },
 ): Promise<T> {
   return new Promise((resolve, reject) => {
-    const args = ["-p", prompt, "--autopilot", "--no-ask-user"];
+    // Write prompt to a temp file to avoid shell escaping issues on Windows.
+    const promptFileName = `_forge-validate-prompt.md`;
+    const promptFilePath = path.join(workingDir, promptFileName);
+    fs.writeFileSync(promptFilePath, prompt, "utf-8");
+
+    const args = ["-p", `Read and follow all instructions in ${promptFileName}`, "--autopilot", "--no-ask-user"];
     if (options?.model) args.push("--model", options.model);
 
     const child = spawn("copilot", args, {
@@ -34,16 +39,19 @@ function callLlmForJson<T = unknown>(
     const timeout = options?.timeoutMs ?? 30_000;
     const timer = setTimeout(() => {
       child.kill("SIGTERM");
+      fs.removeSync(promptFilePath);
       reject(new Error(`Copilot CLI timed out after ${timeout}ms`));
     }, timeout);
 
     child.on("error", (err) => {
       clearTimeout(timer);
+      fs.removeSync(promptFilePath);
       reject(new Error(`Failed to launch Copilot CLI: ${err.message}`));
     });
 
     child.on("close", (code) => {
       clearTimeout(timer);
+      fs.removeSync(promptFilePath);
       const raw = Buffer.concat(chunks).toString("utf-8");
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {

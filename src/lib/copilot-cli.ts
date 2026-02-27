@@ -6,7 +6,10 @@
  * All domain logic lives in domain-registry.ts.
  */
 import { execSync, spawn } from "child_process";
+import fs from "fs-extra";
+import path from "path";
 import { select } from "@inquirer/prompts";
+import chalk from "chalk";
 
 let _copilotCliInstalled: boolean | undefined;
 
@@ -48,21 +51,40 @@ export function getCopilotCliVersion(): string | null {
 
 /** Available models ordered by speed (fastest first) */
 export const AVAILABLE_MODELS = [
-  { value: "claude-sonnet-4.6", name: "Claude Sonnet 4.6", description: "Fastest — best speed/quality tradeoff (recommended)" },
-  { value: "claude-sonnet-4.5", name: "Claude Sonnet 4.5", description: "Fast — higher quality reasoning" },
-  { value: "gpt-5.2-codex", name: "GPT 5.2 Codex", description: "Balanced — strong code generation" },
-  { value: "claude-opus-4.6", name: "Claude Opus 4.6", description: "Slowest — highest quality output" },
+  { value: "claude-sonnet-4.6", name: "Claude Sonnet 4.6", description: "Fastest — best speed/quality tradeoff (recommended)", premium: 1 },
+  { value: "claude-sonnet-4.5", name: "Claude Sonnet 4.5", description: "Fast — higher quality reasoning", premium: 1 },
+  { value: "gpt-4.1",           name: "GPT-4.1",          description: "Fast — efficient code generation", premium: 1 },
+  { value: "gpt-5.2-codex",     name: "GPT 5.2 Codex",    description: "Balanced — strong code generation", premium: 1 },
+  { value: "gemini-2.5-pro",    name: "Gemini 2.5 Pro",   description: "Strong reasoning — large context window", premium: 2 },
+  { value: "claude-opus-4.6",   name: "Claude Opus 4.6",  description: "Highest quality — deep reasoning", premium: 5 },
 ] as const;
+
+/** Format a premium multiplier as a colored badge */
+function premiumBadge(multiplier: number): string {
+  if (multiplier <= 1) return chalk.dim(" 1x");
+  if (multiplier <= 2) return chalk.yellow(` ⚡ ${multiplier}x premium`);
+  return chalk.red(` ⚡ ${multiplier}x premium`);
+}
+
+/**
+ * Look up the premium request multiplier for a model ID.
+ * Returns 1 if the model is not found.
+ */
+export function getModelMultiplier(modelId: string): number {
+  const entry = AVAILABLE_MODELS.find((m) => m.value === modelId);
+  return entry?.premium ?? 1;
+}
 
 /**
  * Interactive model picker. Returns the selected model ID.
+ * Shows premium request multiplier badges next to each model.
  */
 export async function selectModel(): Promise<string> {
   return select({
     message: "Select a model for AI generation:",
     choices: AVAILABLE_MODELS.map((m) => ({
       value: m.value,
-      name: `${m.name} — ${m.description}`,
+      name: `${m.name.padEnd(18)} ${m.description}${premiumBadge(m.premium)}`,
     })),
     default: "claude-sonnet-4.6",
   });
@@ -84,6 +106,10 @@ export interface LaunchOptions {
  * Uses --autopilot, --allow-all, --no-ask-user for fully autonomous execution.
  * --plan activates plan mode for deeper reasoning (used by planner agents).
  * --max-autopilot-continues prevents runaway sessions.
+ *
+ * Prompts are written to a temp file in the working directory to avoid
+ * shell argument parsing issues on Windows (cmd.exe mangles special characters
+ * in long, complex prompts containing backticks, quotes, and JSON).
  */
 export function launchCopilotCli(
   workingDir: string,
@@ -93,8 +119,15 @@ export function launchCopilotCli(
   return new Promise((resolve, reject) => {
     const agentName = options?.agent ?? "forge-orchestrator";
     const maxContinues = options?.maxContinues ?? 25;
+
+    // Write prompt to a temp file to avoid shell escaping issues on Windows.
+    // Use agent name in filename to prevent conflicts during parallel execution.
+    const promptFileName = `_forge-prompt-${agentName}.md`;
+    const promptFilePath = path.join(workingDir, promptFileName);
+    fs.writeFileSync(promptFilePath, prompt, "utf-8");
+
     const args = [
-      "-p", prompt,
+      "-p", `Read and follow all instructions in ${promptFileName}`,
       "--agent", agentName,
       "--autopilot",
       "--allow-all",
@@ -117,10 +150,12 @@ export function launchCopilotCli(
     });
 
     child.on("error", (err) => {
+      fs.removeSync(promptFilePath);
       reject(new Error(`Failed to launch Copilot CLI: ${err.message}`));
     });
 
     child.on("close", (code) => {
+      fs.removeSync(promptFilePath);
       resolve(code ?? 0);
     });
   });
